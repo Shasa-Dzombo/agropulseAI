@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Sync - AgroPulse NVR</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        {% include 'partials/nav.html' %}
+        <main>
+            <h2>Cloud Backup Status</h2>
+            <div class="card">
+                <h3>Upload Queue</h3>
+                <div id="upload-queue-list">
+                    <!-- Upload queue will be populated by JavaScript -->
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="/static/js/cloud.js"></script>
+</body>
+</html>

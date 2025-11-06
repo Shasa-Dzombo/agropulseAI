@@ -1,0 +1,167 @@
+# NVR System Configuration - ENTERPRISE TEMPLATE
+# This file contains all new configuration options for federation, analytics, and cloud sync.
+
+system:
+  thread_pool_workers: 8
+
+database:
+  database_path: "/mnt/usb_hdd/agropulse_nvr.db"
+
+cameras:
+  - id: "pi_cctv_01"
+    name: "North Field Camera"
+    type: "pi_cctv"
+    enabled: true
+    source: "rtsp://192.168.1.101:8554/stream"
+    ai_processing:
+      enabled: true
+      model: "general_yolo" # New: specify which model to use
+      motion_threshold: 10
+      object_classes: ["person", "vehicle", "cow", "wild_boar"]
+    recording:
+      mode: "motion"
+      pre_buffer_seconds: 5
+      post_buffer_seconds: 10
+
+  - id: "esp32_cam_01"
+    name: "Water Trough"
+    type: "esp32_snapshot"
+    enabled: true
+    source: "http://192.168.1.201/capture"
+    snapshot_interval_seconds: 30
+    ai_processing:
+      enabled: true
+      model: "general_yolo" # New: specify which model to use
+      object_classes: ["cow"]
+    recording:
+      mode: "off"
+
+storage:
+  base_path: "/mnt/usb_hdd/agropulse_recordings"
+  max_storage_gb: 1800
+  retention_days: 30
+
+ai_engine:
+  models:
+    - name: "general_yolo"
+      model_path: "models/yolov4-tiny.weights"
+      config_path: "models/yolov4-tiny.cfg"
+      classes_path: "models/coco.names"
+      confidence_threshold: 0.5
+  training:
+    enabled: true
+    dataset_path: "/mnt/usb_hdd/agropulse_datasets"
+    low_confidence_threshold: 0.3 # Detections below this (but above model threshold) are candidates for collection
+    collection_classes: ["person", "vehicle"] # Only collect images with these objects for retraining
+  video_analytics:
+    lpr:
+      enabled: false
+      model_path: "models/lpr.pt" # Example path
+    facial_recognition:
+      enabled: false
+      # ... other facial recognition settings
+
+security:
+  blockchain_anchor_enabled: true
+  cloud_api_endpoint: "https://your-cloud-backend.com/api/anchor"
+  pqc_enabled: true
+  audit_log_enabled: true
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+
+system_health:
+  check_interval_seconds: 60
+  thresholds:
+    cpu_temp_c: 85.0
+    memory_percent: 90.0
+    disk_percent: 95.0
+
+alerting:
+  handlers:
+    - type: "log"
+      levels: ["info", "warning", "critical"]
+    - type: "webhook"
+      url: "https://your-alert-webhook-url.com/endpoint"
+      levels: ["warning", "critical"]
+
+federation:
+  enabled: true
+  node_type: "SECONDARY" # PRIMARY, SECONDARY, or STANDALONE
+  node_name: "nvr-north-field" # Must be unique in the cluster
+  health_check_interval: 60 # seconds
+
+cloud_sync:
+  enabled: true
+  provider: "s3" # Currently only s3 is supported
+  upload_on_object: ["person", "vehicle"] # Automatically upload clips containing these objects
+  delete_after_upload: false
+  s3:
+    bucket_name: "your-agropulse-backup-bucket"
+    region: "us-east-1"
+    access_key: "YOUR_AWS_ACCESS_KEY"
+    secret_key: "YOUR_AWS_SECRET_KEY"
+    endpoint_url: null # Optional: for MinIO or other S3-compatible services
+
+# New section for Incident Management
+incident_management:
+  enabled: true
+  default_severity: "MEDIUM"
+  auto_create_on: ["intrusion", "line_crossing"] # Automatically create incidents for these analytics events
+
+# New section for Live Map
+live_map:
+  enabled: true
+
+# New section for Reporting
+reporting:
+  enabled: true
+  report_path: "/mnt/usb_hdd/agropulse_reports"
+  # schedule: "0 2 * * *" # Daily at 2 AM (cron format)
+
+# New section for Automation
+automation:
+  enabled: true
+
+# New section for ONVIF
+onvif:
+  enabled: true
+
+# New section for High Availability
+high_availability:
+  enabled: true
+  check_interval: 30 # seconds
+
+# New section for Supply Chain Security
+supply_chain_security:
+  enabled: true
+
+# New section for Human-Computer Interface (HCI)
+hci:
+  enabled: true
+  ar:
+    websocket_port: 9999
+  gestures:
+    camera_id: "realsense_d435"
+
+# New section for Environmental Sensing
+environmental_sensing:
+  enabled: true
+  adapters:
+    - type: "mqtt"
+      broker: "mqtt://localhost:1883"
+      topic: "sensors/+/telemetry"
+
+# New section for Compliance and Privacy
+compliance:
+  enabled: true
+  default_retention_days: 30
+
+# New section for Advanced Blockchain Ledger
+blockchain_ledger:
+  enabled: true
+  ipfs:
+    api_addr: "http://127.0.0.1:5001"
+  smart_contracts:
+    provider_url: "" # e.g., https://mainnet.infura.io/v3/YOUR_PROJECT_ID

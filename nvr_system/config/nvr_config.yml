@@ -1,0 +1,78 @@
+# NVR System Configuration
+
+system:
+  thread_pool_workers: 8 # Number of threads for blocking tasks like AI inference
+
+cameras:
+  - id: "pi_cctv_01"
+    name: "North Field Camera"
+    type: "pi_cctv" # or "esp32_snapshot"
+    enabled: true
+    source: "rtsp://192.168.1.101:8554/stream" # RTSP URL for Pi-CCTV
+    ai_processing:
+      enabled: true
+      motion_threshold: 10 # Number of frames with motion to trigger recording
+      object_classes: ["person", "vehicle", "cow", "wild_boar"] # Only record if these are detected
+    recording:
+      mode: "motion" # 'always', 'motion', or 'off'
+      pre_buffer_seconds: 5
+      post_buffer_seconds: 10
+
+  - id: "pi_cctv_02"
+    name: "Barn Entrance"
+    type: "pi_cctv"
+    enabled: true
+    source: "rtsp://192.168.1.102:8554/stream"
+    ai_processing:
+      enabled: true
+      motion_threshold: 5
+      object_classes: ["person", "vehicle"]
+    recording:
+      mode: "motion"
+      pre_buffer_seconds: 5
+      post_buffer_seconds: 15
+
+  - id: "esp32_cam_01"
+    name: "Water Trough"
+    type: "esp32_snapshot"
+    enabled: true
+    source: "http://192.168.1.201/capture" # URL to fetch snapshot from ESP32
+    snapshot_interval_seconds: 30 # How often to fetch a snapshot
+    ai_processing:
+      enabled: true
+      object_classes: ["cow"] # Analyze for presence of cows
+    recording:
+      mode: "off" # Snapshots are saved as events, not continuous video
+
+storage:
+  base_path: "/mnt/usb_hdd/agropulse_recordings" # Mount point of the USB Hard Drive
+  max_storage_gb: 1800 # 1.8 TB
+  retention_days: 30 # Delete recordings older than this
+
+ai_engine:
+  model_path: "models/yolov4-tiny.weights" # Placeholder for a real model file
+  config_path: "models/yolov4-tiny.cfg"
+  classes_path: "models/coco.names"
+  confidence_threshold: 0.5
+  classes: [
+    "person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat",
+    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+    "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+    "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+    "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "sofa", "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", "laptop", "mouse",
+    "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
+    "toothbrush", "wild_boar" # Custom class
+  ]
+
+security:
+  blockchain_anchor_enabled: true
+  cloud_api_endpoint: "https://your-cloud-backend.com/api/anchor"
+  pqc_enabled: true
+
+api:
+  host: "0.0.0.0"
+  port: 8000

@@ -1,0 +1,20 @@
+# Kyber Parameters
+# Based on Kyber-768
+
+KEM_K = 3
+KEM_N = 256
+KEM_Q = 3329
+
+KEM_ETA1 = 2
+KEM_ETA2 = 2
+
+KEM_DU = 10
+KEM_DV = 4
+
+KEM_SYMBYTES = 32
+
+# Derived parameters
+KEM_PUBLICKEYBYTES = (KEM_K * 320 + 32)
+KEM_SECRETKEYBYTES = (KEM_K * 384 * 2 + 32 + 32)
+KEM_CIPHERTEXTBYTES = (KEM_DU * KEM_K * 32 + KEM_DV * 32)
+KEM_BYTES = 32

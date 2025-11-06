@@ -1,0 +1,2 @@
+dependencies:
+  microchip/cryptoauthlib: "^3.7"

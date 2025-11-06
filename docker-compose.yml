@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: agropulse_db
+    environment:
+      POSTGRES_USER: agropulse
+      POSTGRES_PASSWORD: secure_password
+      POSTGRES_DB: agropulse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - agropulse_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agropulse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (for Celery/Caching)
+  redis:
+    image: redis:7-alpine
+    container_name: agropulse_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - agropulse_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build: .
+    container_name: agropulse_backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agropulse:secure_password@db:5432/agropulse
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agropulse_network
+    env_file:
+      - .env
+
+  # Celery Worker (for background tasks)
+  celery:
+    build: .
+    container_name: agropulse_celery
+    command: celery -A app.tasks worker --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agropulse:secure_password@db:5432/agropulse
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - db
+    networks:
+      - agropulse_network
+    env_file:
+      - .env
+
+  # Nginx (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: agropulse_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - backend
+    networks:
+      - agropulse_network
+
+volumes:
+  postgres_data:
+
+networks:
+  agropulse_network:
+    driver: bridge

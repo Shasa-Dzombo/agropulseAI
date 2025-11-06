@@ -1,0 +1,35 @@
+# requirements.txt for the AI-NVR System (Jetson Nano)
+
+# Core
+pyyaml
+numpy
+opencv-python-headless
+# For Jetson, you might need a specific build of opencv. 
+# This is a placeholder for a standard system.
+
+# API Server
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+
+# Security
+pysha3
+pynacl  # For crypto operations, often used with PQC libraries
+
+# AI Engine
+# The actual AI library (e.g., torch, onnxruntime-gpu) would be installed 
+# separately, often via specific wheels for the Jetson platform.
+# For example:
+# torch
+# torchvision
+# onnxruntime-gpu
+
+# Note: This file is a template. The exact versions and packages, especially for
+# AI and computer vision, will depend heavily on the Jetson JetPack version.
+# It's recommended to use a virtual environment.
+#
+# Example installation:
+# python3 -m venv venv
+# source venv/bin/activate
+# pip install -r requirements.txt

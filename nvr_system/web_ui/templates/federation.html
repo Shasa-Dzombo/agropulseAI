@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Federation - AgroPulse NVR</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        {% include 'partials/nav.html' %}
+        <main>
+            <h2>NVR Cluster Management</h2>
+            <div class="card">
+                <h3>Cluster Status</h3>
+                <div id="node-list">
+                    <!-- Node statuses will be populated by JavaScript -->
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="/static/js/federation.js"></script>
+</body>
+</html>

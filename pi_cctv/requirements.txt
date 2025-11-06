@@ -1,0 +1,15 @@
+# Requirements for the Pi-CCTV device
+
+# This device relies on GStreamer and system libraries for its operation.
+# The Python bindings for GStreamer are typically installed via the system package manager.
+
+# On a Raspberry Pi running Debian/Raspberry Pi OS:
+#
+# sudo apt-get update
+# sudo apt-get install -y python3-gi python3-gst-1.0 gir1.2-gst-rtsp-server-1.0 gstreamer1.0-tools
+#
+# For camera access:
+# sudo apt-get install -y gstreamer1.0-libcamera
+#
+# After installing these system packages, the main.py script should run without
+# needing a separate pip install.

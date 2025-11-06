@@ -1,0 +1,598 @@
+# AgroPulse Monitoring & Observability Stack
+# ==========================================
+#
+# Complete monitoring setup with:
+# - Prometheus (metrics collection)
+# - Grafana (dashboards)
+# - AlertManager (alerting)
+# - Loki (log aggregation)
+# - Jaeger (distributed tracing)
+# - ELK Stack (centralized logging)
+#
+# Deployment: Helm charts + Custom configurations
+
+---
+# Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'agropulse-production'
+        environment: 'prod'
+    
+    # AlertManager configuration
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+          - alertmanager:9093
+    
+    # Load rules
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    # Scrape configs
+    scrape_configs:
+      # Kubernetes API Server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+      
+      # Kubernetes Nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+      
+      # Kubernetes Pods
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+      
+      # AgroPulse API
+      - job_name: 'agropulse-api'
+        static_configs:
+        - targets: ['agropulse-api.agropulse-prod.svc.cluster.local:9090']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+      
+      # AgroPulse AI Inference
+      - job_name: 'agropulse-ai'
+        static_configs:
+        - targets: ['agropulse-ai.agropulse-prod.svc.cluster.local:9090']
+      
+      # IoT Gateway (MQTT)
+      - job_name: 'iot-gateway'
+        static_configs:
+        - targets: ['iot-gateway.agropulse-prod.svc.cluster.local:9090']
+      
+      # PostgreSQL
+      - job_name: 'postgresql'
+        static_configs:
+        - targets: ['postgres-exporter.agropulse-prod.svc.cluster.local:9187']
+      
+      # Redis
+      - job_name: 'redis'
+        static_configs:
+        - targets: ['redis-exporter.agropulse-prod.svc.cluster.local:9121']
+      
+      # Node Exporter (System metrics)
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - monitoring
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          regex: 'node-exporter'
+          action: keep
+
+---
+# Prometheus Alert Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+data:
+  alert-rules.yml: |
+    groups:
+    - name: api_alerts
+      interval: 30s
+      rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) 
+            / 
+            sum(rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High API error rate ({{ $value | humanizePercentage }})"
+          description: "API error rate is above 5% for 5 minutes"
+      
+      # High Latency
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High API latency ({{ $value }}s)"
+          description: "P95 latency is above 2 seconds for 10 minutes"
+      
+      # Pod Down
+      - alert: PodDown
+        expr: up{job="kubernetes-pods"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod {{ $labels.kubernetes_pod_name }} is down"
+          description: "Pod has been down for 5 minutes"
+      
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: |
+          (
+            sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (pod)
+            /
+            sum(container_spec_cpu_quota{container!=""}/container_spec_cpu_period{container!=""}) by (pod)
+          ) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.pod }}"
+          description: "CPU usage is above 90% for 10 minutes"
+      
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            sum(container_memory_working_set_bytes{container!=""}) by (pod)
+            /
+            sum(container_spec_memory_limit_bytes{container!=""}) by (pod)
+          ) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.pod }}"
+          description: "Memory usage is above 90% for 10 minutes"
+      
+      # Database Connection Errors
+      - alert: DatabaseConnectionErrors
+        expr: |
+          sum(rate(database_connection_errors_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "High database connection errors"
+          description: "More than 10 connection errors per second"
+      
+      # IoT Gateway Offline
+      - alert: IoTGatewayOffline
+        expr: up{job="iot-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: iot
+        annotations:
+          summary: "IoT gateway is offline"
+          description: "Gateway has been unreachable for 2 minutes"
+      
+      # High MQTT Message Queue
+      - alert: HighMQTTQueueDepth
+        expr: mqtt_queue_depth > 10000
+        for: 10m
+        labels:
+          severity: warning
+          component: iot
+        annotations:
+          summary: "MQTT queue depth is high ({{ $value }})"
+          description: "Queue has more than 10k messages for 10 minutes"
+      
+      # AI Inference Slow
+      - alert: SlowAIInference
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ai_inference_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "AI inference is slow ({{ $value }}s)"
+          description: "P95 inference time exceeds 5 seconds"
+
+---
+# AlertManager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      slack_api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+      receiver: 'default'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        continue: true
+      - match:
+          severity: warning
+        receiver: 'warning-alerts'
+    
+    receivers:
+    - name: 'default'
+      email_configs:
+      - to: 'ops@agropulse.io'
+        from: 'alerts@agropulse.io'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'alerts@agropulse.io'
+        auth_password: 'YOUR_APP_PASSWORD'
+    
+    - name: 'critical-alerts'
+      slack_configs:
+      - channel: '#critical-alerts'
+        title: '🚨 Critical Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+      pagerduty_configs:
+      - service_key: 'YOUR_PAGERDUTY_KEY'
+    
+    - name: 'warning-alerts'
+      slack_configs:
+      - channel: '#alerts'
+        title: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+    
+    inhibit_rules:
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'cluster', 'service']
+
+---
+# Grafana Dashboards
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+data:
+  agropulse-overview.json: |
+    {
+      "dashboard": {
+        "title": "AgroPulse Overview",
+        "panels": [
+          {
+            "title": "API Request Rate",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total[5m])) by (status)",
+                "legendFormat": "{{ status }}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "API Latency (P95)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+                "legendFormat": "P95"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Active IoT Devices",
+            "targets": [
+              {
+                "expr": "sum(mqtt_clients_connected)",
+                "legendFormat": "Connected Devices"
+              }
+            ],
+            "type": "singlestat"
+          },
+          {
+            "title": "AI Inference Throughput",
+            "targets": [
+              {
+                "expr": "sum(rate(ai_inference_total[5m]))",
+                "legendFormat": "Inferences/sec"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Database Query Time",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(database_query_duration_seconds_bucket[5m])) by (le))",
+                "legendFormat": "P95"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Cache Hit Rate",
+            "targets": [
+              {
+                "expr": "sum(rate(redis_keyspace_hits_total[5m])) / (sum(rate(redis_keyspace_hits_total[5m])) + sum(rate(redis_keyspace_misses_total[5m])))",
+                "legendFormat": "Hit Rate"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Pod CPU Usage",
+            "targets": [
+              {
+                "expr": "sum(rate(container_cpu_usage_seconds_total{container!=\"\"}[5m])) by (pod)",
+                "legendFormat": "{{ pod }}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Pod Memory Usage",
+            "targets": [
+              {
+                "expr": "sum(container_memory_working_set_bytes{container!=\"\"}) by (pod) / 1024 / 1024",
+                "legendFormat": "{{ pod }}"
+              }
+            ],
+            "type": "graph"
+          }
+        ]
+      }
+    }
+
+---
+# Loki Configuration (Log Aggregation)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: monitoring
+data:
+  loki.yaml: |
+    auth_enabled: false
+    
+    server:
+      http_listen_port: 3100
+    
+    ingester:
+      lifecycler:
+        address: 127.0.0.1
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+        final_sleep: 0s
+      chunk_idle_period: 5m
+      chunk_retain_period: 30s
+    
+    schema_config:
+      configs:
+      - from: 2020-05-15
+        store: boltdb
+        object_store: filesystem
+        schema: v11
+        index:
+          prefix: index_
+          period: 168h
+    
+    storage_config:
+      boltdb:
+        directory: /tmp/loki/index
+      filesystem:
+        directory: /tmp/loki/chunks
+    
+    limits_config:
+      enforce_metric_name: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+    
+    chunk_store_config:
+      max_look_back_period: 0s
+    
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 720h
+
+---
+# Jaeger Configuration (Distributed Tracing)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: monitoring
+data:
+  jaeger.yaml: |
+    storage:
+      type: elasticsearch
+      options:
+        es:
+          server-urls: http://elasticsearch:9200
+          index-prefix: jaeger
+    
+    query:
+      base-path: /jaeger
+    
+    collector:
+      zipkin:
+        host-port: :9411
+      num-workers: 100
+      queue-size: 2000
+
+---
+# ELK Stack - Elasticsearch
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: monitoring
+spec:
+  serviceName: elasticsearch
+  replicas: 3
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+        env:
+        - name: cluster.name
+          value: "agropulse-logs"
+        - name: discovery.type
+          value: "zen"
+        - name: ES_JAVA_OPTS
+          value: "-Xms2g -Xmx2g"
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/elasticsearch/data
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "4Gi"
+          limits:
+            cpu: "2000m"
+            memory: "8Gi"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: 500Gi
+
+---
+# Infrastructure README
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infrastructure-docs
+  namespace: agropulse-prod
+data:
+  README.md: |
+    # AgroPulse Cloud Infrastructure
+    
+    ## Quick Start
+    
+    ### 1. Deploy Infrastructure (Terraform)
+    ```bash
+    cd infrastructure
+    terraform init
+    terraform plan -out=plan.tfplan
+    terraform apply plan.tfplan
+    ```
+    
+    ### 2. Deploy Application (Kubernetes)
+    ```bash
+    kubectl apply -f kubernetes-deploy.yaml
+    ```
+    
+    ### 3. Install Monitoring Stack (Helm)
+    ```bash
+    helm install prometheus prometheus-community/kube-prometheus-stack \
+      --namespace monitoring \
+      --create-namespace \
+      --values monitoring-values.yaml
+    ```
+    
+    ## Monitoring URLs
+    - Prometheus: http://prometheus.monitoring.svc.cluster.local:9090
+    - Grafana: http://grafana.monitoring.svc.cluster.local:3000 (admin/admin)
+    - AlertManager: http://alertmanager.monitoring.svc.cluster.local:9093
+    
+    ## Estimated Costs
+    - Small (dev): $500/month (5 nodes, t3.medium)
+    - Medium (staging): $1,500/month (10 nodes, t3.large)
+    - Large (production): $5,000/month (30+ nodes, c5.2xlarge, GPU)
+    
+    ## Support
+    Email: devops@agropulse.io
+    Slack: #infrastructure

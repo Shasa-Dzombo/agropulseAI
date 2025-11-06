@@ -1,0 +1,926 @@
+# AgroPulse Cloud Infrastructure
+# ==============================
+#
+# Complete Kubernetes deployment for production-grade smart farming platform.
+#
+# Architecture:
+# - Microservices (API, AI, IoT Gateway, Blockchain, Database)
+# - Auto-scaling (HPA + Cluster Autoscaler)
+# - High availability (3+ replicas per service)
+# - Monitoring (Prometheus + Grafana)
+# - Logging (ELK Stack)
+# - Service mesh (Istio)
+# - CI/CD (GitHub Actions + ArgoCD)
+#
+# Infrastructure:
+# - Cloud: AWS EKS / GCP GKE / Azure AKS
+# - Compute: 5-50 nodes (t3.medium to c5.2xlarge)
+# - Storage: EBS/Persistent Volumes (500GB - 5TB)
+# - Database: RDS PostgreSQL (Multi-AZ)
+# - Cache: ElastiCache Redis (Cluster mode)
+# - Object Storage: S3 / GCS / Azure Blob
+# - CDN: CloudFront / Cloud CDN
+#
+# Estimated Cost: $500 - $5,000/month (depending on scale)
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agropulse-prod
+  labels:
+    name: agropulse-prod
+    environment: production
+
+---
+# ConfigMap: Application Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agropulse-config
+  namespace: agropulse-prod
+data:
+  # Database
+  DATABASE_HOST: "agropulse-db.cluster-abc123.us-east-1.rds.amazonaws.com"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "agropulse"
+  DATABASE_SSL: "true"
+  DATABASE_POOL_SIZE: "20"
+  
+  # Redis Cache
+  REDIS_HOST: "agropulse-cache.abc123.use1.cache.amazonaws.com"
+  REDIS_PORT: "6379"
+  REDIS_CLUSTER_MODE: "true"
+  
+  # Object Storage
+  S3_BUCKET: "agropulse-data-prod"
+  S3_REGION: "us-east-1"
+  
+  # MQTT Broker
+  MQTT_BROKER_HOST: "mqtt.agropulse.io"
+  MQTT_BROKER_PORT: "8883"
+  MQTT_BROKER_SSL: "true"
+  
+  # AI/ML
+  MODEL_STORAGE_PATH: "s3://agropulse-models-prod/v1/"
+  INFERENCE_BATCH_SIZE: "32"
+  INFERENCE_TIMEOUT_MS: "5000"
+  
+  # Blockchain
+  ETHEREUM_RPC_URL: "https://mainnet.infura.io/v3/YOUR_PROJECT_ID"
+  SMART_CONTRACT_ADDRESS: "0x1234567890abcdef1234567890abcdef12345678"
+  
+  # Feature Flags
+  ENABLE_BLOCKCHAIN: "true"
+  ENABLE_AI_INFERENCE: "true"
+  ENABLE_DRONE_INTEGRATION: "true"
+  ENABLE_SACCO_LOANS: "true"
+  
+  # Monitoring
+  PROMETHEUS_URL: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+  GRAFANA_URL: "http://grafana.monitoring.svc.cluster.local:3000"
+  
+  # Logging
+  ELASTICSEARCH_URL: "http://elasticsearch.logging.svc.cluster.local:9200"
+  LOG_LEVEL: "INFO"
+
+---
+# Secret: Sensitive Credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agropulse-secrets
+  namespace: agropulse-prod
+type: Opaque
+stringData:
+  # Database
+  DATABASE_USERNAME: "agropulse_admin"
+  DATABASE_PASSWORD: "CHANGE_ME_SECURE_PASSWORD_123!"
+  
+  # Redis
+  REDIS_PASSWORD: "CHANGE_ME_REDIS_PASSWORD_456!"
+  
+  # AWS Credentials
+  AWS_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE"
+  AWS_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+  
+  # JWT Secret
+  JWT_SECRET_KEY: "CHANGE_ME_JWT_SECRET_789!"
+  
+  # Blockchain Private Key
+  BLOCKCHAIN_PRIVATE_KEY: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+  
+  # API Keys
+  DRONE_API_KEY: "drone_api_key_example_123"
+  WEATHER_API_KEY: "weather_api_key_example_456"
+  SMS_API_KEY: "sms_api_key_example_789"
+
+---
+# Deployment: Main API Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agropulse-api
+  namespace: agropulse-prod
+  labels:
+    app: agropulse-api
+    tier: backend
+    version: v2.1.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: agropulse-api
+  template:
+    metadata:
+      labels:
+        app: agropulse-api
+        tier: backend
+        version: v2.1.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: agropulse-sa
+      containers:
+      - name: api
+        image: agropulse/api:2.1.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: DATABASE_HOST
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: DATABASE_PORT
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: DATABASE_NAME
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: DATABASE_USERNAME
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: DATABASE_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: REDIS_HOST
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: REDIS_PASSWORD
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: JWT_SECRET_KEY
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+      
+      # Sidecar: Envoy Proxy (Service Mesh)
+      - name: envoy
+        image: envoyproxy/envoy:v1.28.0
+        ports:
+        - containerPort: 15001
+          name: envoy-admin
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+
+---
+# Service: API Load Balancer
+apiVersion: v1
+kind: Service
+metadata:
+  name: agropulse-api
+  namespace: agropulse-prod
+  labels:
+    app: agropulse-api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: agropulse-api
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8000
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+
+---
+# HorizontalPodAutoscaler: API Auto-scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agropulse-api-hpa
+  namespace: agropulse-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agropulse-api
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 5
+        periodSeconds: 30
+      selectPolicy: Max
+
+---
+# Deployment: AI Inference Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agropulse-ai
+  namespace: agropulse-prod
+  labels:
+    app: agropulse-ai
+    tier: ai-ml
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agropulse-ai
+  template:
+    metadata:
+      labels:
+        app: agropulse-ai
+        tier: ai-ml
+    spec:
+      nodeSelector:
+        node-type: gpu  # Deploy on GPU nodes
+      containers:
+      - name: ai-inference
+        image: agropulse/ai-inference:2.1.0
+        ports:
+        - containerPort: 8001
+        env:
+        - name: MODEL_STORAGE_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: MODEL_STORAGE_PATH
+        - name: INFERENCE_BATCH_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: INFERENCE_BATCH_SIZE
+        resources:
+          requests:
+            cpu: "2000m"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4000m"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: ai-models-pvc
+
+---
+# Service: AI Inference
+apiVersion: v1
+kind: Service
+metadata:
+  name: agropulse-ai
+  namespace: agropulse-prod
+spec:
+  type: ClusterIP
+  selector:
+    app: agropulse-ai
+  ports:
+  - port: 8001
+    targetPort: 8001
+
+---
+# Deployment: IoT Gateway (MQTT)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agropulse-iot-gateway
+  namespace: agropulse-prod
+  labels:
+    app: iot-gateway
+    tier: iot
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: iot-gateway
+  template:
+    metadata:
+      labels:
+        app: iot-gateway
+        tier: iot
+    spec:
+      containers:
+      - name: mqtt-broker
+        image: eclipse-mosquitto:2.0.18
+        ports:
+        - containerPort: 1883
+          name: mqtt
+        - containerPort: 8883
+          name: mqtt-ssl
+        - containerPort: 9001
+          name: websocket
+        volumeMounts:
+        - name: mosquitto-config
+          mountPath: /mosquitto/config
+        - name: mosquitto-data
+          mountPath: /mosquitto/data
+        - name: mosquitto-log
+          mountPath: /mosquitto/log
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+      
+      # Sidecar: LoRa Gateway Bridge
+      - name: lora-gateway
+        image: agropulse/lora-gateway:2.1.0
+        ports:
+        - containerPort: 1700
+          protocol: UDP
+        env:
+        - name: MQTT_BROKER_HOST
+          value: "localhost"
+        - name: MQTT_BROKER_PORT
+          value: "1883"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      
+      volumes:
+      - name: mosquitto-config
+        configMap:
+          name: mosquitto-config
+      - name: mosquitto-data
+        persistentVolumeClaim:
+          claimName: mqtt-data-pvc
+      - name: mosquitto-log
+        emptyDir: {}
+
+---
+# Service: IoT Gateway
+apiVersion: v1
+kind: Service
+metadata:
+  name: iot-gateway
+  namespace: agropulse-prod
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  selector:
+    app: iot-gateway
+  ports:
+  - name: mqtt
+    port: 1883
+    targetPort: 1883
+    protocol: TCP
+  - name: mqtt-ssl
+    port: 8883
+    targetPort: 8883
+    protocol: TCP
+  - name: websocket
+    port: 9001
+    targetPort: 9001
+    protocol: TCP
+  - name: lora-udp
+    port: 1700
+    targetPort: 1700
+    protocol: UDP
+
+---
+# Deployment: Blockchain Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agropulse-blockchain
+  namespace: agropulse-prod
+  labels:
+    app: blockchain
+    tier: blockchain
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: blockchain
+  template:
+    metadata:
+      labels:
+        app: blockchain
+        tier: blockchain
+    spec:
+      containers:
+      - name: blockchain-worker
+        image: agropulse/blockchain:2.1.0
+        env:
+        - name: ETHEREUM_RPC_URL
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: ETHEREUM_RPC_URL
+        - name: BLOCKCHAIN_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: BLOCKCHAIN_PRIVATE_KEY
+        - name: SMART_CONTRACT_ADDRESS
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: SMART_CONTRACT_ADDRESS
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+
+---
+# StatefulSet: PostgreSQL Database (For Development)
+# Production: Use managed RDS/CloudSQL/Azure Database
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: agropulse-prod
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15.4
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "agropulse"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: DATABASE_USERNAME
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: DATABASE_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+# Service: PostgreSQL
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: agropulse-prod
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+
+---
+# StatefulSet: Redis Cache
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: agropulse-prod
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.2-alpine
+        command: ["redis-server"]
+        args: 
+        - "--appendonly yes"
+        - "--requirepass $(REDIS_PASSWORD)"
+        - "--maxmemory 2gb"
+        - "--maxmemory-policy allkeys-lru"
+        ports:
+        - containerPort: 6379
+          name: redis
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: REDIS_PASSWORD
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            cpu: "1000m"
+            memory: "4Gi"
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+# Service: Redis
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: agropulse-prod
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+
+---
+# Ingress: HTTPS Traffic Routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agropulse-ingress
+  namespace: agropulse-prod
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+spec:
+  tls:
+  - hosts:
+    - api.agropulse.io
+    - app.agropulse.io
+    secretName: agropulse-tls
+  rules:
+  - host: api.agropulse.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: agropulse-api
+            port:
+              number: 8000
+  - host: app.agropulse.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: agropulse-frontend
+            port:
+              number: 3000
+
+---
+# NetworkPolicy: Restrict Traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-network-policy
+  namespace: agropulse-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: agropulse-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: nginx-ingress
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+# PodDisruptionBudget: High Availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agropulse-api-pdb
+  namespace: agropulse-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: agropulse-api
+
+---
+# ServiceAccount: RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agropulse-sa
+  namespace: agropulse-prod
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/agropulse-eks-role
+
+---
+# PersistentVolumeClaim: AI Models
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-models-pvc
+  namespace: agropulse-prod
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 500Gi
+
+---
+# PersistentVolumeClaim: MQTT Data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mqtt-data-pvc
+  namespace: agropulse-prod
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# CronJob: Database Backup
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+  namespace: agropulse-prod
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: agropulse/db-backup:2.1.0
+            env:
+            - name: DATABASE_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agropulse-config
+                  key: DATABASE_HOST
+            - name: DATABASE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: agropulse-secrets
+                  key: DATABASE_USERNAME
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agropulse-secrets
+                  key: DATABASE_PASSWORD
+            - name: S3_BUCKET
+              value: "agropulse-backups-prod"
+            resources:
+              requests:
+                cpu: "200m"
+                memory: "512Mi"
+          restartPolicy: OnFailure
+
+---
+# Job: Database Migration
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migration-v2-1-0
+  namespace: agropulse-prod
+spec:
+  template:
+    spec:
+      containers:
+      - name: migration
+        image: agropulse/migrations:2.1.0
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://$(DATABASE_USERNAME):$(DATABASE_PASSWORD)@$(DATABASE_HOST):$(DATABASE_PORT)/$(DATABASE_NAME)"
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: DATABASE_USERNAME
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: agropulse-secrets
+              key: DATABASE_PASSWORD
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: DATABASE_HOST
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: DATABASE_PORT
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: agropulse-config
+              key: DATABASE_NAME
+      restartPolicy: Never
+  backoffLimit: 3

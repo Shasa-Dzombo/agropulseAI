@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgroPulse AI-NVR</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AgroPulse AI-NVR</h1>
+            <div id="system-health">
+                <span id="health-status"></span>
+                <span id="health-temp"></span>
+                <span id="health-mem"></span>
+            </div>
+        </header>
+
+        <main>
+            <div class="streams-container">
+                <h2>Live Streams</h2>
+                <div id="live-streams">
+                    {% for camera in cameras %}
+                    <div class="stream-card">
+                        <h3>{{ camera.name }}</h3>
+                        <img src="/api/streams/{{ camera.id }}/live" alt="Live stream for {{ camera.name }}">
+                        <p>Status: <span id="status-{{ camera.id }}">{{ camera.status }}</span></p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="events-container">
+                <h2>Event Search</h2>
+                <div class="search-form">
+                    <select id="search-camera"></select>
+                    <select id="search-class"></select>
+                    <input type="datetime-local" id="search-start-time">
+                    <input type="datetime-local" id="search-end-time">
+                    <button id="search-button">Search</button>
+                </div>
+                <div id="event-list">
+                    <!-- Events will be populated by JavaScript -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

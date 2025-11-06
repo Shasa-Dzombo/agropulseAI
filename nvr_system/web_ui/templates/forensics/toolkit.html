@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forensics Toolkit - AgroPulse NVR</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        {% include 'partials/nav.html' %}
+        <main>
+            <h2>Digital Forensics Toolkit</h2>
+            <div class="card">
+                <h3>Path Tracking</h3>
+                <input type="text" id="event-id-input" placeholder="Enter Event ID to track">
+                <button id="track-path-btn">Track Object Path</button>
+                <div id="path-results"></div>
+            </div>
+            <div class="card">
+                <h3>Video Synopsis</h3>
+                <!-- UI for selecting camera and time range -->
+                <button id="generate-synopsis-btn">Generate Synopsis</button>
+                <div id="synopsis-results"></div>
+            </div>
+        </main>
+    </div>
+    <script src="/static/js/forensics/toolkit.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+AgroPulse Cleanup Backup
+Created: 2025-11-04T12:33:56.416573
+============================================================
+
+File: powdery_mildew_detector.py
+Reason: Superseded by integrated powdery mildew detection in crop-specific suites (tomato, cucumber, pepper, strawberry, grape, etc.). Each crop suite now handles powdery mildew with crop-specific parameters.
+------------------------------------------------------------
+File: downy_mildew_detector.py
+Reason: Replaced by crop-specific downy mildew detection in tomato, cucumber, lettuce, grape, and onion disease suites. Integrated approach provides better crop-specific symptom analysis.
+------------------------------------------------------------
+File: botrytis_detector.py
+Reason: Integrated into strawberry, grape, tomato, and pepper disease suites. Gray mold detection now uses crop-specific lesion patterns and environmental correlation.
+------------------------------------------------------------

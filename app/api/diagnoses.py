@@ -147,7 +147,7 @@ async def process_diagnosis(diagnosis_id: int, db: AsyncSession):
 @router.get("/{diagnosis_id}", response_model=DiagnosisComplete)
 async def get_diagnosis(
     diagnosis_id: int,
-    current_user: User = Depends(get_current_farmer),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -172,7 +172,7 @@ async def get_diagnosis(
 
 @router.get("", response_model=List[DiagnosisResponse])
 async def get_user_diagnoses(
-    current_user: User = Depends(get_current_farmer),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     limit: int = 20,
     offset: int = 0
@@ -195,7 +195,7 @@ async def get_user_diagnoses(
 @router.post("/upload-image", response_model=dict)
 async def upload_diagnosis_image(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_farmer)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Upload an image for diagnosis to S3

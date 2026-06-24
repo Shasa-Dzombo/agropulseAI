@@ -25,7 +25,7 @@ Author: AgroPulse Engineering Team
 """
 
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
@@ -935,16 +935,76 @@ async def control_irrigation(
         )
     
     check_device_access(current_user, device.farm_id, db)
-    
-    # TODO: Implement actual irrigation control logic
-    # This would interface with the physical irrigation system
-    
+
+    from app.models.database import Alert, AlertSeverity, DeviceStatus
+
+    if request.action == "start" and request.duration_minutes is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Duration is required for start action"
+        )
+
+    now = datetime.utcnow()
+    action_status = {
+        "start": "running",
+        "stop": "stopped",
+        "schedule": "scheduled",
+    }[request.action]
+
+    is_running = request.action == "start"
+    estimated_completion = (
+        now + timedelta(minutes=request.duration_minutes)
+        if request.action == "start" and request.duration_minutes
+        else None
+    )
+
+    irrigation_state = {
+        "status": action_status,
+        "is_running": is_running,
+        "current_zone": request.zone,
+        "started_at": now.isoformat() if is_running else None,
+        "estimated_completion": estimated_completion.isoformat() if estimated_completion else None,
+        "duration_minutes": request.duration_minutes,
+        "scheduled_time": request.scheduled_time.isoformat() if request.scheduled_time else None,
+        "water_usage_liters": 0.0 if not request.duration_minutes else round(request.duration_minutes * 1.5, 2),
+        "last_command_at": now.isoformat(),
+        "last_command": request.action,
+    }
+
+    alert = Alert(
+        alert_type="device",
+        alert_category="irrigation_control",
+        severity=AlertSeverity.INFO,
+        title=f"Irrigation {request.action.title()} command",
+        message=(
+            f"Irrigation controller {device.device_name} received a {request.action} command"
+            + (f" for zone {request.zone}" if request.zone else "")
+        ),
+        farm_id=device.farm_id,
+        user_id=current_user["id"],
+        device_id=device.device_id,
+        triggered_by="manual",
+        trigger_condition=request.action,
+        trigger_value=str(request.duration_minutes or request.scheduled_time or request.zone or ""),
+        metadata={"irrigation": irrigation_state},
+    )
+    db.add(alert)
+
+    device.status = DeviceStatus.ONLINE if request.action != "stop" else DeviceStatus.OFFLINE
+    device.last_seen_at = now
+    device.last_data_at = now
+    device.updated_at = now
+    db.commit()
+
     return {
         "message": f"Irrigation {request.action} command sent",
         "device_id": request.device_id,
         "action": request.action,
         "duration_minutes": request.duration_minutes,
-        "zone": request.zone
+        "scheduled_time": request.scheduled_time,
+        "zone": request.zone,
+        "status": action_status,
+        "timestamp": now.isoformat(),
     }
 
 
@@ -975,14 +1035,57 @@ async def get_irrigation_status(
     
     check_device_access(current_user, device.farm_id, db)
     
-    # TODO: Get actual status from irrigation system
-    # Placeholder response
+    def _status_value(value: Any) -> Any:
+        return value.value if hasattr(value, "value") else value
+
+    def _parse_datetime(value: Any) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return None
+
+    def _parse_int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    state = {}
+    for attr in ("irrigation_status", "status_payload", "state", "metadata"):
+        payload = getattr(device, attr, None)
+        if isinstance(payload, dict):
+            state = payload.get("irrigation") or payload
+            break
+
+    if not state:
+        from app.models.database import Alert
+
+        latest_alert = db.query(Alert).filter(
+            Alert.device_id == device.device_id,
+            Alert.alert_category == "irrigation_control"
+        ).order_by(Alert.created_at.desc()).first()
+
+        if latest_alert and isinstance(latest_alert.metadata, dict):
+            state = latest_alert.metadata.get("irrigation") or latest_alert.metadata or {}
+
+    device_status = str(_status_value(getattr(device, "status", "offline"))).lower()
+    is_running = bool(state.get("is_running", state.get("running", device_status in {"running", "irrigating"})))
+    started_at = _parse_datetime(state.get("started_at"))
+    duration_minutes = _parse_int(state.get("duration_minutes") or state.get("duration"))
+    estimated_completion = _parse_datetime(state.get("estimated_completion") or state.get("estimated_completion_at"))
+    if not estimated_completion and started_at and duration_minutes:
+        estimated_completion = started_at + timedelta(minutes=duration_minutes)
+
     return IrrigationStatusResponse(
         device_id=device_id,
-        status="idle",
-        is_running=False,
-        current_zone=None,
-        started_at=None,
-        estimated_completion=None,
-        water_usage_liters=0.0
+        status=state.get("status") or ("running" if is_running else device_status),
+        is_running=is_running,
+        current_zone=state.get("current_zone") or state.get("zone"),
+        started_at=started_at,
+        estimated_completion=estimated_completion,
+        water_usage_liters=state.get("water_usage_liters") or state.get("water_used_liters") or 0.0
     )

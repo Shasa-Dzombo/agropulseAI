@@ -93,7 +93,7 @@ class VirtualOrchard:
     terrain_roughness: float  # 0-1
     
     # Disease simulation
-    diseased_trees: Set[int]  # Indices of diseased trees
+    diseased_trees: set[int]  # Indices of diseased trees
     disease_types: Dict[int, str]  # Tree index → disease name
     
     # Environment

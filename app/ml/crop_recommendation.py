@@ -164,7 +164,7 @@ GREENHOUSE_CROP_DATABASE = {
         "price_stability": "high",
         "substrate": ["coco_coir", "perlite", "soil_mix"],
         "system": ["drip", "ebb_flow", "gutter"]
-    }
+    },
     "kale": {
         "optimal_ph": (6.0, 7.5),
         "nitrogen_requirement": (80, 120),

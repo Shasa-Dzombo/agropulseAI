@@ -1,60 +1,60 @@
 # FastAPI and ASGI server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
 
 # Database
-sqlalchemy==2.0.23
-alembic==1.13.0
-psycopg2-binary==2.9.9
-asyncpg==0.29.0
+sqlalchemy
+alembic
+psycopg2-binary
+asyncpg
 
 # Authentication & Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-bcrypt==4.1.1
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+bcrypt
 
 # Payment Integration
-requests==2.31.0
-httpx==0.25.2
+requests
+httpx
 
 # Image Processing
-Pillow==10.1.0
-opencv-python-headless==4.8.1.78
-numpy==1.26.2
-scikit-image==0.22.0  # For advanced image analysis
-scipy==1.11.4  # For scientific computing
+Pillow
+opencv-python-headless
+numpy
+scikit-image  # For advanced image analysis
+scipy  # For scientific computing
 
 # Disease Detection APIs
-requests==2.31.0  # HTTP client for API calls
-urllib3==2.1.0  # HTTP client backend
-certifi==2023.11.17  # SSL certificates
+requests  # HTTP client for API calls
+urllib3  # HTTP client backend
+certifi  # SSL certificates
 
 # AI/ML Integration
-boto3==1.34.8  # AWS SDK for Bedrock, SageMaker, S3
-azure-ai-vision==0.15.1b1  # Azure Computer Vision
-openai==1.6.1  # For GPT-based chatbot
-tensorflow==2.15.0  # For local AI models (optional)
+boto3  # AWS SDK for Bedrock, SageMaker, S3
+azure-ai-vision-imageanalysis  # Azure Computer Vision
+openai  # For GPT-based chatbot
+# tensorflow  # For local AI models (optional)
 
 # Blockchain Integration
-web3==6.11.3
-eth-account==0.10.0
+web3
+eth-account
 
 # Quantum Computing APIs
-amazon-braket-sdk==1.58.0
-qiskit==0.45.1
+amazon-braket-sdk
+qiskit
 
 # Background Tasks
-celery==5.3.4
-redis==5.0.1
+celery
+redis
 
 # Monitoring & Logging
-prometheus-client==0.19.0
-python-json-logger==2.0.7
+prometheus-client
+python-json-logger
 
 # Utils
-python-dateutil==2.8.2
-pytz==2023.3
-phonenumbers==8.13.27
+python-dateutil
+pytz
+phonenumbers

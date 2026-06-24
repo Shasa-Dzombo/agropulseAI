@@ -324,6 +324,7 @@ Each crop includes precise parameters:
 
 ### Real-Time Analysis
 The firmware continuously:
+
 1. Reads all sensors every minute
 2. Compares values to crop-specific optimal ranges
 3. Calculates VPD (Vapor Pressure Deficit)

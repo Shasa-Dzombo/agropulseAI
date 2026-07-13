@@ -17,7 +17,7 @@ from sqlalchemy import (
     Enum as SQLEnum, JSON, DECIMAL, BigInteger, SmallInteger,
     LargeBinary, ARRAY, Interval
 )
-from sqlalchemy.orm import relationship, declarative_base, validates, Session
+from sqlalchemy.orm import relationship, declarative_base, declared_attr, validates, Session
 from sqlalchemy.ext.hybrid import hybrid_property, hybrid_method
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.sql import func, select, and_, or_, case
@@ -189,11 +189,21 @@ class SoftDeleteMixin:
 
 class AuditMixin:
     """Audit trail fields."""
-    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
-    updated_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
-    
-    created_by = relationship("User", foreign_keys=[created_by_id], lazy='select')
-    updated_by = relationship("User", foreign_keys=[updated_by_id], lazy='select')
+    @declared_attr
+    def created_by_id(cls):
+        return Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    @declared_attr
+    def updated_by_id(cls):
+        return Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    @declared_attr
+    def created_by(cls):
+        return relationship("User", foreign_keys=[cls.created_by_id], lazy='select')
+
+    @declared_attr
+    def updated_by(cls):
+        return relationship("User", foreign_keys=[cls.updated_by_id], lazy='select')
 
 
 class VersionMixin:
@@ -1558,8 +1568,8 @@ class Transaction(Base, TimestampMixin):
     # Description and notes
     description = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
-    metadata = Column(JSONB, default=dict)
-    
+    transaction_metadata = Column(JSONB, default=dict)
+
     # Fees and charges
     transaction_fee_ksh = Column(DECIMAL(10, 2), default=0)
     net_amount_ksh = Column(DECIMAL(12, 2), nullable=True)
@@ -1963,8 +1973,8 @@ class Alert(Base, TimestampMixin):
     notification_channels = Column(ARRAY(String), default=list)  # email, sms, push, whatsapp
     
     # Metadata
-    metadata = Column(JSONB, default=dict)
-    
+    alert_metadata = Column(JSONB, default=dict)
+
     # Relationships
     farm = relationship("Farm", back_populates="alerts")
     diagnosis = relationship("Diagnosis", back_populates="alert")
@@ -2017,8 +2027,8 @@ class Notification(Base, TimestampMixin):
     related_entity_id = Column(Integer, nullable=True)
     
     # Metadata
-    metadata = Column(JSONB, default=dict)
-    
+    notification_metadata = Column(JSONB, default=dict)
+
     # Relationships
     user = relationship("User", back_populates="notifications")
     

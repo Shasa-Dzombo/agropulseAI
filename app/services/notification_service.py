@@ -14,14 +14,17 @@ import logging
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 import requests
-from firebase_admin import messaging, credentials, initialize_app
+try:
+    from firebase_admin import messaging, credentials, initialize_app
+except ImportError:
+    messaging = credentials = initialize_app = None
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.cctv import SentryScoutHandshake, CCTV, CCTVCapture
 from app.models.user import User
 from app.models.field import Field
-from app.core.config import settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,9 @@ class NotificationService:
     
     def __init__(self):
         # Initialize Firebase Admin SDK for push notifications
+        if credentials is None:
+            logger.warning("⚠️ firebase_admin not installed; push notifications disabled")
+            return
         try:
             cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
             initialize_app(cred)

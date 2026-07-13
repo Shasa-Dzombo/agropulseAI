@@ -91,3 +91,6 @@ Thumbs.db
 # Backup files
 *.bak
 *.backup
+
+#mini-agropulse
+mini_agropulse/

@@ -78,8 +78,8 @@ class Alert(Base):
     longitude = Column(Float, nullable=True)
     
     confidence_score = Column(Float, nullable=True)
-    metadata = Column(JSON, nullable=True)
-    
+    alert_metadata = Column(JSON, nullable=True)
+
     acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     

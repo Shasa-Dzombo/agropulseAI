@@ -37,9 +37,11 @@ class AlertResponse(AlertCreate):
     status: AlertStatus
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    metadata: Optional[Dict[str, Any]] = Field(None, validation_alias="alert_metadata")
+
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 
 class SensorDataCreate(BaseModel):

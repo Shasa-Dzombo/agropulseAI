@@ -67,7 +67,7 @@ async def create_diagnosis(
         permit_id=permit.id,
         status=DiagnosisStatus.PENDING,
         image_urls=diagnosis_data.image_urls,
-        metadata=diagnosis_data.metadata,
+        diagnosis_metadata=diagnosis_data.metadata,
         triage_diagnosis=diagnosis_data.triage_diagnosis,
         triage_confidence=diagnosis_data.triage_confidence
     )
@@ -114,7 +114,7 @@ async def process_diagnosis(diagnosis_id: int, db: AsyncSession):
         # Call AWS AI service
         ai_result = await aws_ai_service.diagnose_crop_disease(
             image_urls=diagnosis.image_urls,
-            metadata=diagnosis.metadata
+            metadata=diagnosis.diagnosis_metadata
         )
         
         if ai_result.get("success"):

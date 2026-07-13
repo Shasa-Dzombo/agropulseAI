@@ -1,10 +1,9 @@
 from braket.aws import AwsDevice
 from braket.circuits import Circuit
-from braket.ocean_plugin import BraketSampler, BraketDWaveSampler
 import boto3
 from typing import List, Dict, Optional
 import numpy as np
-from app.core.config import settings
+from app.config import settings
 import json
 import time
 import logging
@@ -134,7 +133,8 @@ class QuantumOptimizationService:
         """
         try:
             from dimod import BinaryQuadraticModel
-            
+            from braket.ocean_plugin import BraketDWaveSampler
+
             logger.info("⚛️ Using D-Wave Quantum Annealer")
             
             # Convert Q matrix to D-Wave BQM format

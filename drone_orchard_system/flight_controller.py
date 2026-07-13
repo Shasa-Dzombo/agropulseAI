@@ -218,7 +218,7 @@ class DroneFlightController:
         self.current_altitude = 0.0
         self.current_heading = 0.0  # Degrees
         self.current_speed = 0.0  # m/s
-        self.flight_mode = FlightMode.GROUNDED
+        self.flight_mode = FlightMode.MANUAL
         self.drone_status = DroneStatus.GROUNDED
         
         # Flight plan

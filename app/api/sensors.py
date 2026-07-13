@@ -104,7 +104,7 @@ async def create_greenhouse_alert(
         latitude=alert_data.latitude,
         longitude=alert_data.longitude,
         confidence_score=alert_data.confidence_score,
-        metadata=alert_data.metadata,
+        alert_metadata=alert_data.metadata,
         status="pending"
     )
     

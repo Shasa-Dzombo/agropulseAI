@@ -54,8 +54,6 @@ from .database import (
     
     # IoT and Sensors
     IoTDevice,
-    SensorReading,
-    WeatherRecord,
     SoilTest,
     
     # Alerts and Notifications

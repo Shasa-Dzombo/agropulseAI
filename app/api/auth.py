@@ -27,7 +27,7 @@ from typing import Optional
 import secrets
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.orm import Session
 
@@ -546,7 +546,7 @@ def verify_phone(
 
 @router.post("/resend-verification")
 def resend_verification(
-    verification_type: str = Field(..., pattern="^(email|phone)$"),
+    verification_type: str = Query(..., pattern="^(email|phone)$"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency)
 ):

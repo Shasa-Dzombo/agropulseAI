@@ -33,13 +33,15 @@ from app.services.base import (
     InsufficientPermissionsException,
     ResourceNotFoundException
 )
-from app.services.user_service import UserService
-from app.services.farm_service import FarmService
-from app.services.chama_service import ChamaService
-from app.services.iot_service import IoTService
-from app.services.product_service import ProductService
-from app.services.notification_service import NotificationService, notification_service
-from app.services.analytics_service import AnalyticsService
+
+# NOTE: FarmService, ChamaService, IoTService, ProductService, UserService, and
+# AnalyticsService are not re-exported here. They depend on app.models.database
+# (a second, parallel model/DB stack not used by any currently-registered API
+# router) and some reference model classes that don't exist there at all
+# (e.g. Harvest, CropType, GrowthStage on Farm/Field). None of the registered
+# routers import services at the package level, so this package intentionally
+# only eagerly loads what's safe. Import service submodules directly
+# (e.g. `from app.services.payment import ...`) as the registered routers do.
 
 __all__ = [
     # Base classes
@@ -49,14 +51,4 @@ __all__ = [
     "BusinessRuleException",
     "InsufficientPermissionsException",
     "ResourceNotFoundException",
-    
-    # Services
-    "UserService",
-    "FarmService",
-    "ChamaService",
-    "IoTService",
-    "ProductService",
-    "NotificationService",
-    "notification_service",
-    "AnalyticsService",
 ]

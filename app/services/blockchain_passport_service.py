@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from app.models.blockchain import CropHealthPassport, PassportAccessPermit
 from app.models.cctv import CCTVCapture, CropHealthReading
-from app.core.config import settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 

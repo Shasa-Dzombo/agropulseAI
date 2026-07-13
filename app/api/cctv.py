@@ -17,7 +17,7 @@ from app.models.cctv import (
 from app.models.sensor import Alert
 from app.schemas import cctv as cctv_schemas
 from app.services.cctv_service import virtual_multispectral_service
-from app.services.ai_service import ai_service
+from app.services.ai_service import aws_ai_service as ai_service
 from app.services.notification_service import notification_service
 
 router = APIRouter(prefix="/api/v1/cctv", tags=["CCTV"])

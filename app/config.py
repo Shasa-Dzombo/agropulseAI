@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     DIAGNOSIS_PRICE: float = 50.0
     WEEKLY_SUBSCRIPTION: float = 500.0
     MONTHLY_SUBSCRIPTION: float = 1800.0
+
+    # Drone orchard survey pipeline
+    DRONE_IMAGE_STORAGE: str = "s3"  # "s3" or "local" - local writes to DRONE_LOCAL_IMAGE_DIR, no AWS credentials needed
+    DRONE_LOCAL_IMAGE_DIR: str = "local_uploads"
     
     class Config:
         env_file = ".env"

@@ -42,7 +42,8 @@ from app.models import (
     cctv,
     optimization,
     advanced_features,
-    chama
+    chama,
+    drone
 )
 
 target_metadata = Base.metadata

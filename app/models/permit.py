@@ -81,8 +81,8 @@ class Payment(Base):
     flutterwave_transaction_id = Column(String(255), nullable=True)
     
     description = Column(Text, nullable=True)
-    metadata = Column(JSON, nullable=True)
-    
+    payment_metadata = Column(JSON, nullable=True)
+
     completed_at = Column(DateTime(timezone=True), nullable=True)
     failed_reason = Column(Text, nullable=True)
     

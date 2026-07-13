@@ -315,7 +315,7 @@ class UserContext(BaseModel):
     user_id: str
     farmer_id: Optional[str] = None
     user_name: Optional[str] = None
-    phone_number: Optional[constr(regex=r'^\+?[1-9]\d{1,14}$')] = None
+    phone_number: Optional[constr(pattern=r'^\+?[1-9]\d{1,14}$')] = None
     email: Optional[EmailStr] = None
     language_preference: str = Field(default="en", description="ISO 639-1 language code")
     country_code: str = Field(default="KE", description="ISO 3166-1 alpha-2 country code")
@@ -409,7 +409,7 @@ class DiagnosisRequest(BaseModel):
     permit_token_id: str = Field(..., description="Permit NFT token ID")
     
     # Images
-    image_urls: conlist(HttpUrl, min_items=1, max_items=10) = Field(
+    image_urls: conlist(HttpUrl, min_length=1, max_length=10) = Field(
         ..., 
         description="1-10 image URLs for diagnosis"
     )
@@ -478,7 +478,7 @@ class DiagnosisRequest(BaseModel):
             return values['created_at'] + timedelta(hours=24)
         return v
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_request(cls, values):
         """Cross-field validation."""
         # Validate image metadata matches image URLs
@@ -515,7 +515,7 @@ class DiagnosisRequest(BaseModel):
 class BulkDiagnosisRequest(BaseModel):
     """Batch diagnosis request for multiple samples."""
     batch_id: str = Field(default_factory=lambda: f"BATCH-{uuid4()}")
-    diagnoses: conlist(DiagnosisRequest, min_items=1, max_items=50)
+    diagnoses: conlist(DiagnosisRequest, min_length=1, max_length=50)
     batch_priority: int = Field(3, ge=1, le=5)
     batch_metadata: Optional[Dict[str, Any]] = None
     callback_url: Optional[HttpUrl] = None
@@ -824,11 +824,12 @@ class DiagnosisResponse(BaseModel):
     processing_time_seconds: Optional[float] = None
     
     # Metadata
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(None, validation_alias="diagnosis_metadata")
     version: str = "2.0"
-    
+
     class Config:
         from_attributes = True
+        populate_by_name = True
         json_schema_extra = {
             "example": {
                 "id": 12345,

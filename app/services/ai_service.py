@@ -30,19 +30,20 @@ class AWSAIService:
             region_name=settings.AWS_REGION
         )
     
-    async def upload_to_s3(self, file_content: bytes, file_name: str) -> str:
+    async def upload_to_s3(self, file_content: bytes, file_name: str, folder: str = "diagnoses") -> str:
         """
         Upload image to S3 and return URL
         """
         try:
+            key = f"{folder}/{file_name}"
             self.s3_client.put_object(
                 Bucket=settings.AWS_S3_BUCKET,
-                Key=f"diagnoses/{file_name}",
+                Key=key,
                 Body=file_content,
                 ContentType='image/jpeg'
             )
-            
-            url = f"https://{settings.AWS_S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/diagnoses/{file_name}"
+
+            url = f"https://{settings.AWS_S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/{key}"
             return url
         except Exception as e:
             print(f"Error uploading to S3: {e}")

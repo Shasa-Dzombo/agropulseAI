@@ -25,6 +25,14 @@ class CalibrationStatus(str, enum.Enum):
     NEEDS_RECALIBRATION = "needs_recalibration"
 
 
+class HandshakeStatus(str, enum.Enum):
+    ALERT_SENT = "sentry_alert_sent"
+    ACKNOWLEDGED = "scout_acknowledged"
+    FARMER_ARRIVED = "scout_arrived"
+    DIAGNOSIS_REQUESTED = "diagnosis_requested"
+    DIAGNOSIS_COMPLETED = "diagnosis_completed"
+
+
 class CCTV(Base):
     __tablename__ = "cctvs"
     

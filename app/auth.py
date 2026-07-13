@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.config import settings
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, Farm
 from app.models.sensor import Sensor
 
 # Password hashing
@@ -156,5 +156,35 @@ async def verify_sensor_api_key(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sensor is not active"
         )
-    
+
     return sensor
+
+
+async def get_api_key_user(
+    api_key: str = Security(api_key_header),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Authenticate a device (e.g. CCTV/Sentry camera) via its sensor API key
+    and resolve it to the farm owner's User record, for endpoints that need
+    a User rather than a Sensor for authorization checks.
+    """
+    sensor = await verify_sensor_api_key(api_key, db)
+
+    result = await db.execute(select(Farm).where(Farm.id == sensor.farm_id))
+    farm = result.scalar_one_or_none()
+    if farm is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sensor is not linked to a valid farm"
+        )
+
+    result = await db.execute(select(User).where(User.id == farm.owner_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Farm owner not found"
+        )
+
+    return user

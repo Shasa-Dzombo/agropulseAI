@@ -34,7 +34,7 @@ class Diagnosis(Base):
     
     # Input data
     image_urls = Column(JSON, nullable=False)  # Array of image URLs
-    metadata = Column(JSON, nullable=True)  # Camera settings, location, etc.
+    diagnosis_metadata = Column(JSON, nullable=True)  # Camera settings, location, etc.
     
     # AI Results
     primary_diagnosis = Column(String(255), nullable=True)

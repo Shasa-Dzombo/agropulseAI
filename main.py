@@ -2,10 +2,27 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import importlib
+import logging
 import time
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, sensors, payments, diagnoses, optimization, cctv, advanced
+
+logger = logging.getLogger(__name__)
+
+# Each router is imported independently so a broken/incomplete one (e.g. one
+# still missing dependencies) doesn't prevent the rest of the app - including
+# routers unrelated to it - from starting. Failures are logged, not silenced.
+_ROUTER_MODULES = [
+    "auth", "sensors", "payments", "diagnoses", "optimization", "cctv",
+    "advanced", "drones",
+]
+routers = {}
+for _module_name in _ROUTER_MODULES:
+    try:
+        routers[_module_name] = importlib.import_module(f"app.api.{_module_name}")
+    except Exception as e:
+        logger.warning(f"Router 'app.api.{_module_name}' failed to load and will be unavailable: {e}")
 
 
 @asynccontextmanager
@@ -120,14 +137,23 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Include routers
-app.include_router(auth.router, prefix="/api/v1")
-app.include_router(sensors.router, prefix="/api/v1")
-app.include_router(payments.router, prefix="/api/v1")
-app.include_router(diagnoses.router, prefix="/api/v1")
-app.include_router(optimization.router, prefix="/api/v1")
-app.include_router(cctv.router)  # CCTV router has its own prefix
-app.include_router(advanced.router)  # Advanced features (blockchain, Chama, interventions)
+# Include routers (only those that imported successfully - see loader above)
+if "auth" in routers:
+    app.include_router(routers["auth"].router, prefix="/api/v1")
+if "sensors" in routers:
+    app.include_router(routers["sensors"].router, prefix="/api/v1")
+if "payments" in routers:
+    app.include_router(routers["payments"].router, prefix="/api/v1")
+if "diagnoses" in routers:
+    app.include_router(routers["diagnoses"].router, prefix="/api/v1")
+if "optimization" in routers:
+    app.include_router(routers["optimization"].router, prefix="/api/v1")
+if "cctv" in routers:
+    app.include_router(routers["cctv"].router)  # CCTV router has its own prefix
+if "advanced" in routers:
+    app.include_router(routers["advanced"].router)  # Advanced features (blockchain, Chama, interventions)
+if "drones" in routers:
+    app.include_router(routers["drones"].router, prefix="/api/v1")
 
 
 # Health check endpoint

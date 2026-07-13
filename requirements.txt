@@ -58,3 +58,11 @@ python-json-logger
 python-dateutil
 pytz
 phonenumbers
+
+# Drone orchard survey pipeline
+pymavlink  # real MAVLink flight-controller hardware integration
+
+# Testing
+pytest
+pytest-asyncio
+aiosqlite  # in-memory async SQLite DB for tests

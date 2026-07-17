@@ -94,3 +94,9 @@ Thumbs.db
 
 #mini-agropulse
 mini_agropulse/
+
+#local images
+local_uploads/
+
+# docs
+docs/

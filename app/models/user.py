@@ -20,7 +20,10 @@ class SubscriptionTier(str, enum.Enum):
 
 
 class User(Base):
-    __tablename__ = "users"
+    # "users" collides with Universe B's app/models/database.py User, which
+    # already owns the physical "users" table in Postgres with a different
+    # schema - namespaced to app_users so this ORM gets its own table.
+    __tablename__ = "app_users"
     
     id = Column(Integer, primary_key=True, index=True)
     phone_number = Column(String(20), unique=True, index=True, nullable=False)
@@ -43,10 +46,12 @@ class User(Base):
 
 
 class Farm(Base):
-    __tablename__ = "farms"
-    
+    # "farms" collides with Universe B's Farm table - namespaced for the
+    # same reason as User above.
+    __tablename__ = "app_farms"
+
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
     name = Column(String(255), nullable=False)
     location = Column(String(255), nullable=True)
     latitude = Column(Float, nullable=True)
@@ -68,7 +73,7 @@ class Zone(Base):
     __tablename__ = "zones"
     
     id = Column(Integer, primary_key=True, index=True)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False)
     name = Column(String(100), nullable=False)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
@@ -85,7 +90,7 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
     tier = Column(SQLEnum(SubscriptionTier), default=SubscriptionTier.FREE)
     start_date = Column(DateTime(timezone=True), server_default=func.now())
     end_date = Column(DateTime(timezone=True), nullable=True)

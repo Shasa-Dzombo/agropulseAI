@@ -5,6 +5,7 @@ reachable flight controller; never used by tests (see simulated_backend.py).
 """
 
 import asyncio
+import time
 from typing import AsyncIterator, List, Optional
 
 try:
@@ -53,7 +54,7 @@ class MAVLinkFlightBackend(FlightBackend):
 
         def _upload():
             mav = self._master.mav
-            mavlink = self._master.mavlink
+            mavlink = mavutil.mavlink
 
             loader = mavwp.MAVWPLoader()
             for i, wp in enumerate(waypoints):
@@ -80,14 +81,39 @@ class MAVLinkFlightBackend(FlightBackend):
 
         await asyncio.to_thread(_upload)
 
-    async def arm_and_takeoff(self, target_altitude_m: float) -> None:
+    async def arm_and_takeoff(self, target_altitude_m: float, arm_timeout_s: float = 20.0) -> None:
         def _arm_and_takeoff():
-            mavlink = self._master.mavlink
+            mavlink = mavutil.mavlink
+
+            # ArduPilot rejects NAV_TAKEOFF (and often the arm request
+            # itself) outside GUIDED mode - the default SITL boot mode
+            # won't accept either without this.
+            self._master.set_mode('GUIDED')
+
             self._master.mav.command_long_send(
                 self._master.target_system, self._master.target_component,
                 mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0,
             )
-            self._master.motors_armed_wait()
+
+            # motors_armed_wait() has no timeout - if the arm request is
+            # rejected (failed pre-arm checks, wrong mode, ...) it blocks
+            # forever with no feedback. Poll HEARTBEATs ourselves instead
+            # so a rejected arm raises a clear, actionable error.
+            deadline = time.monotonic() + arm_timeout_s
+            armed = False
+            while time.monotonic() < deadline:
+                hb = self._master.recv_match(type="HEARTBEAT", blocking=True, timeout=5)
+                if hb is not None and (hb.base_mode & mavlink.MAV_MODE_FLAG_SAFETY_ARMED):
+                    armed = True
+                    break
+            if not armed:
+                raise RuntimeError(
+                    f"Timed out waiting for the vehicle to arm ({arm_timeout_s:.0f}s). "
+                    "The arm request was likely rejected - common causes: SITL "
+                    "pre-arm checks not yet passed (wait longer after 'Ready to "
+                    "fly'), or GPS/EKF not yet settled."
+                )
+
             self._master.mav.command_long_send(
                 self._master.target_system, self._master.target_component,
                 mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, target_altitude_m,
@@ -134,7 +160,7 @@ class MAVLinkFlightBackend(FlightBackend):
 
     async def return_to_launch(self) -> None:
         def _rtl():
-            mavlink = self._master.mavlink
+            mavlink = mavutil.mavlink
             self._master.mav.command_long_send(
                 self._master.target_system, self._master.target_component,
                 mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -144,7 +170,7 @@ class MAVLinkFlightBackend(FlightBackend):
 
     async def land(self) -> None:
         def _land():
-            mavlink = self._master.mavlink
+            mavlink = mavutil.mavlink
             self._master.mav.command_long_send(
                 self._master.target_system, self._master.target_component,
                 mavlink.MAV_CMD_NAV_LAND, 0, 0, 0, 0, 0, 0, 0, 0,

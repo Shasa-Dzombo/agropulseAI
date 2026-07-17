@@ -23,11 +23,13 @@ class DiseaseCategory(str, enum.Enum):
 
 
 class Diagnosis(Base):
-    __tablename__ = "diagnoses"
-    
+    # "diagnoses" collides with Universe B's Diagnosis table - namespaced
+    # like User/Farm above.
+    __tablename__ = "app_diagnoses"
+
     id = Column(Integer, primary_key=True, index=True)
-    farmer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    alert_id = Column(Integer, ForeignKey("alerts.id"), nullable=True)
+    farmer_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
+    alert_id = Column(Integer, ForeignKey("app_alerts.id"), nullable=True)
     permit_id = Column(Integer, ForeignKey("permits.id"), nullable=False)
     
     status = Column(SQLEnum(DiagnosisStatus), default=DiagnosisStatus.PENDING)

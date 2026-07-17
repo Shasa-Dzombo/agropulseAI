@@ -36,7 +36,7 @@ class Sensor(Base):
     __tablename__ = "sensors"
     
     id = Column(Integer, primary_key=True, index=True)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False)
     device_id = Column(String(100), unique=True, index=True, nullable=False)
     sensor_type = Column(SQLEnum(SensorType), nullable=False)
     name = Column(String(255), nullable=True)
@@ -59,10 +59,12 @@ class Sensor(Base):
 
 
 class Alert(Base):
-    __tablename__ = "alerts"
-    
+    # "alerts" collides with Universe B's Alert table - namespaced like
+    # User/Farm above.
+    __tablename__ = "app_alerts"
+
     id = Column(Integer, primary_key=True, index=True)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False)
     zone_id = Column(Integer, ForeignKey("zones.id"), nullable=True)
     sensor_id = Column(Integer, ForeignKey("sensors.id"), nullable=False)
     

@@ -17,10 +17,14 @@ Lines: 1200+
 
 import random
 import string
+import sys
+import os
 from datetime import datetime, timedelta, date
 from decimal import Decimal
 from typing import List
 import uuid
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy.orm import Session
 from app.models.database import (
@@ -29,7 +33,7 @@ from app.models.database import (
     Disease, Diagnosis, Treatment,
     Product, Supplier,
     Chama, Transaction, TransactionType, TransactionStatus,
-    IoTDevice, DeviceStatus, SensorReading,
+    IoTDevice, DeviceStatus, DeviceType, SensorReading,
     WeatherRecord, SoilTest,
     Alert, AlertSeverity,
     Notification
@@ -99,83 +103,110 @@ def random_date_between(start_date: date, end_date: date) -> date:
 # SEED FUNCTIONS
 # ============================================================================
 
-def seed_users(db: Session, count: int = 50) -> List[User]:
-    """Create seed users."""
+def seed_users(db: Session, count: int = 50):
+    """Create seed users.
+
+    admin@agropulse.ke / agronomist@agropulse.ke are fixed, deterministic
+    records - re-running this script against a database that already has
+    them would hit a UniqueViolation on email/phone every time, so they're
+    looked up and reused instead of re-inserted. Farmers are random and use
+    a random phone number, so each one gets its own savepoint (like IoT
+    devices) - a rare collision only drops that one farmer instead of the
+    whole batch (previously a single failed admin insert rolled back all
+    50 users because they all shared one flush()).
+    """
     print(f"Creating {count} users...")
-    
+
     users = []
-    
-    # Create admin user
-    admin = User(
-        email='admin@agropulse.ke',
-        phone_number='+254700000000',
-        password_hash=bcrypt.hash('admin123'),
-        first_name='System',
-        last_name='Administrator',
-        role=UserRole.ADMIN,
-        status=AccountStatus.ACTIVE,
-        is_superuser=True,
-        email_verified=True,
-        phone_verified=True,
-        subscription_tier=SubscriptionTier.ENTERPRISE,
-        profile_completion_percentage=100.0,
-        county='Nairobi'
-    )
-    db.add(admin)
+
+    # Admin - idempotent
+    admin = db.query(User).filter_by(email='admin@agropulse.ke').first()
+    if admin is None:
+        admin = User(
+            email='admin@agropulse.ke',
+            phone_number='+254700000000',
+            password_hash=bcrypt.hash('admin123'),
+            first_name='System',
+            last_name='Administrator',
+            role=UserRole.ADMIN,
+            status=AccountStatus.ACTIVE,
+            is_superuser=True,
+            email_verified=True,
+            phone_verified=True,
+            subscription_tier=SubscriptionTier.ENTERPRISE,
+            profile_completion_percentage=100.0,
+            county='Nairobi'
+        )
+        db.add(admin)
+        db.flush()
     users.append(admin)
-    
-    # Create agronomist
-    agronomist = User(
-        email='agronomist@agropulse.ke',
-        phone_number='+254700000001',
-        password_hash=bcrypt.hash('agro123'),
-        first_name='Jane',
-        last_name='Wanjiku',
-        role=UserRole.AGRONOMIST,
-        status=AccountStatus.ACTIVE,
-        email_verified=True,
-        phone_verified=True,
-        subscription_tier=SubscriptionTier.PREMIUM,
-        profile_completion_percentage=95.0,
-        county='Nakuru'
-    )
-    db.add(agronomist)
+
+    # Agronomist - idempotent
+    agronomist = db.query(User).filter_by(email='agronomist@agropulse.ke').first()
+    if agronomist is None:
+        agronomist = User(
+            email='agronomist@agropulse.ke',
+            phone_number='+254700000001',
+            password_hash=bcrypt.hash('agro123'),
+            first_name='Jane',
+            last_name='Wanjiku',
+            role=UserRole.AGRONOMIST,
+            status=AccountStatus.ACTIVE,
+            email_verified=True,
+            phone_verified=True,
+            subscription_tier=SubscriptionTier.PREMIUM,
+            profile_completion_percentage=95.0,
+            county='Nakuru'
+        )
+        db.add(agronomist)
+        db.flush()
     users.append(agronomist)
-    
-    # Create farmers
+
+    # Farmers - each gets its own savepoint
     first_names = ['John', 'Mary', 'David', 'Grace', 'Peter', 'Sarah', 'James', 'Lucy', 'Daniel', 'Faith']
     last_names = ['Kamau', 'Wanjiru', 'Ochieng', 'Mutua', 'Kipchoge', 'Akinyi', 'Mwangi', 'Nyambura']
-    
+
+    failures = []
     for i in range(count - 2):
-        first_name = random.choice(first_names)
-        last_name = random.choice(last_names)
-        county = random.choice(KENYAN_COUNTIES)
-        
-        user = User(
-            email=f"{first_name.lower()}.{last_name.lower()}{i}@example.com",
-            phone_number=random_phone(),
-            password_hash=bcrypt.hash('farmer123'),
-            first_name=first_name,
-            last_name=last_name,
-            role=UserRole.FARMER,
-            status=AccountStatus.ACTIVE if random.random() > 0.1 else AccountStatus.PENDING_VERIFICATION,
-            email_verified=random.random() > 0.2,
-            phone_verified=random.random() > 0.3,
-            subscription_tier=random.choice([SubscriptionTier.FREE, SubscriptionTier.BASIC, SubscriptionTier.PREMIUM]),
-            profile_completion_percentage=random.uniform(50, 100),
-            county=county,
-            latitude=random_coordinates(county)[0],
-            longitude=random_coordinates(county)[1],
-            total_farms=random.randint(1, 3),
-            total_diagnoses=random.randint(0, 20),
-            reputation_score=random.uniform(70, 100)
-        )
-        db.add(user)
-        users.append(user)
-    
-    db.flush()
-    print(f"✓ Created {len(users)} users")
-    return users
+        try:
+            first_name = random.choice(first_names)
+            last_name = random.choice(last_names)
+            county = random.choice(KENYAN_COUNTIES)
+
+            user = User(
+                email=f"{first_name.lower()}.{last_name.lower()}{i}.{uuid.uuid4().hex[:6]}@example.com",
+                phone_number=random_phone(),
+                password_hash=bcrypt.hash('farmer123'),
+                first_name=first_name,
+                last_name=last_name,
+                role=UserRole.FARMER,
+                status=AccountStatus.ACTIVE if random.random() > 0.1 else AccountStatus.PENDING_VERIFICATION,
+                email_verified=random.random() > 0.2,
+                phone_verified=random.random() > 0.3,
+                subscription_tier=random.choice([SubscriptionTier.FREE, SubscriptionTier.BASIC, SubscriptionTier.PREMIUM]),
+                profile_completion_percentage=random.uniform(50, 100),
+                county=county,
+                latitude=random_coordinates(county)[0],
+                longitude=random_coordinates(county)[1],
+                total_farms=random.randint(1, 3),
+                total_diagnoses=random.randint(0, 20),
+                reputation_score=random.uniform(70, 100)
+            )
+            with db.begin_nested():
+                db.add(user)
+                db.flush()
+            users.append(user)
+        except Exception as e:
+            print(f"  ✗ Farmer user #{i + 1} failed: {e}")
+            failures.append({'index': i + 1, 'error': str(e)})
+
+    if failures:
+        print(f"✓ Created {len(users)}/{count} users "
+              f"— {len(failures)} failed at index(es) {[f['index'] for f in failures]}")
+    else:
+        print(f"✓ Created {len(users)} users")
+
+    return users, failures
 
 def seed_farms(db: Session, users: List[User], count: int = 80) -> List[Farm]:
     """Create seed farms."""
@@ -253,63 +284,93 @@ def seed_crop_plantings(db: Session, farms: List[Farm], count: int = 200) -> Lis
     return plantings
 
 def seed_diseases(db: Session) -> List[Disease]:
-    """Create seed diseases."""
+    """Create seed diseases.
+
+    disease_code is fixed/deterministic (from the DISEASES constant), so a
+    second run against an already-seeded database reuses the existing row
+    instead of re-inserting and hitting a UniqueViolation on disease_code.
+    """
     print("Creating disease knowledge base...")
-    
+
     diseases = []
-    
+    created = 0
+
     for disease_data in DISEASES:
-        disease = Disease(
-            disease_code=disease_data['code'],
-            scientific_name=disease_data['name'],
-            common_names={'en': disease_data['name'], 'sw': disease_data['name']},
-            disease_category=disease_data['category'],
-            pathogen_type=disease_data['category'],
-            description=f"Description of {disease_data['name']}",
-            symptoms=['Leaf spots', 'Wilting', 'Discoloration'],
-            yield_loss_range_min=10.0,
-            yield_loss_range_max=50.0,
-            is_active=True,
-            training_sample_count=random.randint(100, 1000),
-            detection_accuracy_percentage=random.uniform(85.0, 98.0)
-        )
-        db.add(disease)
+        disease = db.query(Disease).filter_by(disease_code=disease_data['code']).first()
+        if disease is None:
+            disease = Disease(
+                disease_code=disease_data['code'],
+                scientific_name=disease_data['name'],
+                common_names={'en': disease_data['name'], 'sw': disease_data['name']},
+                disease_category=disease_data['category'],
+                pathogen_type=disease_data['category'],
+                description=f"Description of {disease_data['name']}",
+                symptoms=['Leaf spots', 'Wilting', 'Discoloration'],
+                yield_loss_range_min=10.0,
+                yield_loss_range_max=50.0,
+                is_active=True,
+                training_sample_count=random.randint(100, 1000),
+                detection_accuracy_percentage=random.uniform(85.0, 98.0)
+            )
+            db.add(disease)
+            db.flush()
+            created += 1
         diseases.append(disease)
-    
-    db.flush()
-    print(f"✓ Created {len(diseases)} diseases")
+
+    print(f"✓ {len(diseases)} diseases available ({created} newly created, "
+          f"{len(diseases) - created} already existed)")
     return diseases
 
-def seed_iot_devices(db: Session, farms: List[Farm], count: int = 50) -> List[IoTDevice]:
-    """Create seed IoT devices."""
+def seed_iot_devices(db: Session, farms: List[Farm], count: int = 50):
+    """Create seed IoT devices.
+
+    Each device is created inside its own SAVEPOINT (db.begin_nested()) so a
+    single bad device rolls back only itself, not the whole batch. Failures
+    are caught, logged with the device's 1-based index, and the loop
+    continues to the end instead of aborting the whole seed run.
+    """
     print(f"Creating {count} IoT devices...")
-    
+
     devices = []
-    
+    failures = []
+
     for i in range(count):
-        farm = random.choice(farms)
-        device_type = random.choice(['weather_station', 'soil_sensor', 'camera', 'moisture_sensor'])
-        
-        device = IoTDevice(
-            device_id=f"IOT{str(uuid.uuid4())[:8].upper()}",
-            device_name=f"{device_type.replace('_', ' ').title()} {i+1}",
-            device_type=device_type,
-            owner_id=farm.owner_id,
-            farm_id=farm.id,
-            latitude=farm.latitude,
-            longitude=farm.longitude,
-            status=random.choice([DeviceStatus.ONLINE, DeviceStatus.OFFLINE]),
-            is_active=True,
-            battery_level=random.randint(20, 100) if random.random() > 0.5 else None,
-            sampling_interval_seconds=random.choice([300, 600, 1800, 3600]),
-            installation_date=random_date_between(date(2023, 1, 1), date(2024, 12, 31))
-        )
-        db.add(device)
-        devices.append(device)
-    
-    db.flush()
-    print(f"✓ Created {len(devices)} IoT devices")
-    return devices
+        try:
+            farm = random.choice(farms)
+            device_type = random.choice([
+                DeviceType.WEATHER_STATION, DeviceType.SOIL_SENSOR,
+                DeviceType.CAMERA, DeviceType.MOISTURE_SENSOR,
+            ])
+
+            device = IoTDevice(
+                device_id=f"IOT{str(uuid.uuid4())[:8].upper()}",
+                device_name=f"{device_type.value.replace('_', ' ').title()} {i+1}",
+                device_type=device_type,
+                owner_id=farm.owner_id,
+                farm_id=farm.id,
+                latitude=farm.latitude,
+                longitude=farm.longitude,
+                status=random.choice([DeviceStatus.ONLINE, DeviceStatus.OFFLINE]),
+                is_active=True,
+                battery_level=random.randint(20, 100) if random.random() > 0.5 else None,
+                sampling_interval_seconds=random.choice([300, 600, 1800, 3600]),
+                installation_date=random_date_between(date(2023, 1, 1), date(2024, 12, 31))
+            )
+            with db.begin_nested():
+                db.add(device)
+                db.flush()
+            devices.append(device)
+        except Exception as e:
+            print(f"  ✗ IoT device #{i + 1} failed: {e}")
+            failures.append({'index': i + 1, 'error': str(e)})
+
+    if failures:
+        print(f"✓ Created {len(devices)}/{count} IoT devices "
+              f"— {len(failures)} failed at index(es) {[f['index'] for f in failures]}")
+    else:
+        print(f"✓ Created {len(devices)} IoT devices")
+
+    return devices, failures
 
 def seed_chamas(db: Session, users: List[User], count: int = 10) -> List[Chama]:
     """Create seed chamas."""
@@ -407,42 +468,77 @@ def seed_database(
     print("\n" + "="*60)
     print("🌱 AGROPULSE DATABASE SEEDING")
     print("="*60 + "\n")
-    
-    with get_production_db() as db:
+
+    errors = []  # {'step': str, 'error': str} - collected, never aborts the run
+
+    def run_step(db, step_name, func, *args, **kwargs):
+        """Run one seed step in its own SAVEPOINT. On failure, roll back only
+        that step, log it, and let the caller carry on to the next step."""
         try:
-            # Seed in order (respecting foreign keys)
-            users = seed_users(db, users_count)
-            farms = seed_farms(db, users, farms_count)
-            crops = seed_crop_plantings(db, farms, crops_count)
-            diseases = seed_diseases(db)
-            devices = seed_iot_devices(db, farms, devices_count)
-            chamas = seed_chamas(db, users, chamas_count)
-            transactions = seed_transactions(db, users, chamas, transactions_count)
-            
-            # Commit all changes
-            db.commit()
-            
-            print("\n" + "="*60)
-            print("✅ DATABASE SEEDING COMPLETED SUCCESSFULLY!")
-            print("="*60)
-            print(f"\nSummary:")
-            print(f"  • Users: {len(users)}")
-            print(f"  • Farms: {len(farms)}")
-            print(f"  • Crop Plantings: {len(crops)}")
-            print(f"  • Diseases: {len(diseases)}")
-            print(f"  • IoT Devices: {len(devices)}")
-            print(f"  • Chamas: {len(chamas)}")
-            print(f"  • Transactions: {len(transactions)}")
-            print(f"\nTest Credentials:")
-            print(f"  Admin: admin@agropulse.ke / admin123")
-            print(f"  Agronomist: agronomist@agropulse.ke / agro123")
-            print(f"  Farmer: (any farmer email) / farmer123")
-            print()
-            
+            with db.begin_nested():
+                return func(db, *args, **kwargs)
         except Exception as e:
-            db.rollback()
-            print(f"\n❌ Error seeding database: {e}")
-            raise
+            print(f"❌ Error in step '{step_name}': {e}")
+            errors.append({'step': step_name, 'error': str(e)})
+            return None
+
+    with get_production_db() as db:
+        users_result = run_step(db, 'users', seed_users, users_count)
+        if users_result:
+            users, user_failures = users_result
+            for f in user_failures:
+                errors.append({'step': f"users[farmer #{f['index']}]", 'error': f['error']})
+        else:
+            users = []
+
+        farms = run_step(db, 'farms', seed_farms, users, farms_count) if users else None
+        farms = farms or []
+        crops = run_step(db, 'crop_plantings', seed_crop_plantings, farms, crops_count) if farms else None
+        crops = crops or []
+        diseases = run_step(db, 'diseases', seed_diseases) or []
+
+        devices = []
+        if farms:
+            devices_result = run_step(db, 'iot_devices', seed_iot_devices, farms, devices_count)
+            if devices_result:
+                devices, device_failures = devices_result
+                for f in device_failures:
+                    errors.append({'step': f"iot_devices[device #{f['index']}]", 'error': f['error']})
+        else:
+            print("⚠ Skipping IoT devices — no farms were seeded")
+
+        chamas = run_step(db, 'chamas', seed_chamas, users, chamas_count) if users else None
+        chamas = chamas or []
+        transactions = run_step(db, 'transactions', seed_transactions, users, chamas, transactions_count) if users else None
+        transactions = transactions or []
+
+        # Commit whatever succeeded, even if some steps above failed
+        db.commit()
+
+        print("\n" + "="*60)
+        if errors:
+            print("⚠️  DATABASE SEEDING COMPLETED WITH ERRORS")
+        else:
+            print("✅ DATABASE SEEDING COMPLETED SUCCESSFULLY!")
+        print("="*60)
+        print(f"\nSummary:")
+        print(f"  • Users: {len(users)}")
+        print(f"  • Farms: {len(farms)}")
+        print(f"  • Crop Plantings: {len(crops)}")
+        print(f"  • Diseases: {len(diseases)}")
+        print(f"  • IoT Devices: {len(devices)}")
+        print(f"  • Chamas: {len(chamas)}")
+        print(f"  • Transactions: {len(transactions)}")
+        print(f"\nTest Credentials:")
+        print(f"  Admin: admin@agropulse.ke / admin123")
+        print(f"  Agronomist: agronomist@agropulse.ke / agro123")
+        print(f"  Farmer: (any farmer email) / farmer123")
+
+        if errors:
+            print(f"\n⚠️  {len(errors)} error(s) logged during seeding:")
+            for err in errors:
+                print(f"  - [{err['step']}] {err['error']}")
+        print()
 
 
 if __name__ == '__main__':

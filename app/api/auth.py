@@ -27,15 +27,18 @@ from typing import Optional
 import secrets
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.orm import Session
 
 from app.db_config import get_production_db_dependency
 from app.repositories.user import UserRepository
+from app.models.database import UserRole, SubscriptionTier
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+security = HTTPBearer()
 
 
 # JWT Configuration
@@ -201,21 +204,13 @@ def generate_reset_token() -> str:
 
 
 def get_current_user(
-    token: str = Depends(lambda: None),  # Simplified for now
+    credentials: HTTPAuthorizationCredentials = Security(security),
     db: Session = Depends(get_production_db_dependency)
 ) -> dict:
     """
     Get current authenticated user from JWT token.
-    
-    This is a simplified version. In production, use proper OAuth2PasswordBearer.
     """
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated"
-        )
-    
-    payload = decode_token(token)
+    payload = decode_token(credentials.credentials)
     user_id = payload.get("sub")
     
     if not user_id:
@@ -288,25 +283,35 @@ def register(
     
     # Hash password
     hashed_password = hash_password(request.password)
-    
-    # Generate verification codes
-    email_verification_code = generate_verification_code()
-    phone_verification_code = generate_verification_code()
-    
-    # Create user
+
+    # full_name is a computed property on User (first/middle/last), not a
+    # settable column - split it into first_name/last_name for storage.
+    name_parts = request.full_name.strip().split(" ", 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else name_parts[0]
+
+    # Create user. role/subscription_tier must be actual enum members, not
+    # raw strings - User.role/subscription_tier are plain (non-str) Enum
+    # columns, so SQLAlchemy passes a raw string through unchanged instead
+    # of translating it, which Postgres then rejects as an invalid enum
+    # value (same failure mode as the seed_database.py DeviceType bug).
     user = user_repo.create(
         username=request.username,
         email=request.email,
         phone_number=request.phone_number,
         password_hash=hashed_password,
-        full_name=request.full_name,
+        first_name=first_name,
+        last_name=last_name,
         county=request.county,
-        role=request.role,
-        email_verification_code=email_verification_code,
-        phone_verification_code=phone_verification_code,
-        subscription_tier='free'
+        role=UserRole(request.role),
+        subscription_tier=SubscriptionTier.FREE
     )
-    
+
+    # NOTE: email/phone verification codes are not yet persisted - User has
+    # no email_verification_code/phone_verification_code columns, so
+    # /auth/verify-email, /auth/verify-phone, and /auth/resend-verification
+    # remain broken until those columns are added. Not fixed here (see
+    # docs/API_REQUEST_BODIES.md).
     # TODO: Send verification email
     # TODO: Send verification SMS
     
@@ -359,10 +364,12 @@ def login(
         )
     
     # Update last login
-    user_repo.update(user, last_login=datetime.utcnow())
-    
-    # Create tokens
-    token_data = {"sub": user.id, "username": user.username, "role": user.role}
+    user_repo.update(user, last_login_at=datetime.utcnow())
+
+    # Create tokens. role must be serialized via .value - User.role is a
+    # plain (non-str) Enum column, and a raw UserRole member isn't
+    # JSON-serializable for jwt.encode().
+    token_data = {"sub": user.id, "username": user.username, "role": user.role.value}
     
     if request.remember_me:
         access_token = create_access_token(
@@ -433,7 +440,7 @@ def refresh_token(
         )
     
     # Create new tokens
-    token_data = {"sub": user.id, "username": user.username, "role": user.role}
+    token_data = {"sub": user.id, "username": user.username, "role": user.role.value}
     new_access_token = create_access_token(token_data)
     new_refresh_token = create_refresh_token(token_data)
     
@@ -462,8 +469,27 @@ def get_current_user_info(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
-    return user
+
+    # Built explicitly rather than UserInfoResponse.model_validate(user):
+    # user.role/subscription_tier are plain (non-str) Enum columns and
+    # user.uuid is a uuid.UUID - none of those satisfy the response
+    # model's plain `str` fields without an explicit conversion.
+    return UserInfoResponse(
+        id=user.id,
+        uuid=str(user.uuid),
+        username=user.username,
+        email=user.email,
+        phone_number=user.phone_number,
+        full_name=user.full_name,
+        role=user.role.value,
+        county=user.county,
+        is_active=user.is_active,
+        email_verified=user.email_verified,
+        phone_verified=user.phone_verified,
+        two_factor_enabled=user.two_factor_enabled,
+        subscription_tier=user.subscription_tier.value if user.subscription_tier else None,
+        created_at=user.created_at,
+    )
 
 
 @router.post("/verify-email")

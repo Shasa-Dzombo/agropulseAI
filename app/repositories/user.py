@@ -40,6 +40,18 @@ class UserRepository(BaseRepository[User]):
     # AUTHENTICATION METHODS
     # ========================================================================
     
+    def get_by_username(self, username: str) -> Optional[User]:
+        """
+        Get user by username.
+
+        Args:
+            username: User's username
+
+        Returns:
+            User if found, None otherwise
+        """
+        return self.get_by_field('username', username)
+
     def get_by_email(self, email: str) -> Optional[User]:
         """
         Get user by email address.

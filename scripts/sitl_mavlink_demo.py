@@ -17,8 +17,9 @@ Usage:
 
 import asyncio
 import sys
+import os
 
-sys.path.insert(0, ".")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.drones.flight.backend import GPSCoordinate, Waypoint
 from app.drones.flight.mavlink_backend import MAVLinkFlightBackend

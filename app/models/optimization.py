@@ -16,9 +16,9 @@ class ScoutingPlan(Base):
     __tablename__ = "scouting_plans"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
-    
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False)
+
     status = Column(SQLEnum(OptimizationStatus), default=OptimizationStatus.PENDING)
     
     # Input parameters

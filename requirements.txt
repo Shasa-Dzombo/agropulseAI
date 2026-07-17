@@ -12,9 +12,10 @@ asyncpg
 
 # Authentication & Security
 python-jose[cryptography]
+PyJWT  # app/api/auth.py's own JWT stack - do not confuse with the unrelated "jwt" package on PyPI, which shadows the same import name but has a totally different API (no top-level encode/decode)
 passlib[bcrypt]
 python-multipart
-bcrypt
+bcrypt<4.1  # passlib's bcrypt backend detection is broken on bcrypt>=4.1 (removed bcrypt.__about__)
 
 # Payment Integration
 requests

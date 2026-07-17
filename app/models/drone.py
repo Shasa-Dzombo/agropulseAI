@@ -21,8 +21,8 @@ class DroneFlight(Base):
     __tablename__ = "drone_flights"
 
     id = Column(Integer, primary_key=True, index=True)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False, index=True)
-    requested_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False, index=True)
+    requested_by_id = Column(Integer, ForeignKey("app_users.id"), nullable=False, index=True)
     drone_id = Column(String(100), nullable=False)
 
     backend_type = Column(SQLEnum(DroneBackendType), nullable=False, default=DroneBackendType.SIMULATED)

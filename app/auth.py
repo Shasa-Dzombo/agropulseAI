@@ -74,14 +74,22 @@ async def get_current_user(
     if payload is None:
         raise credentials_exception
     
-    user_id: int = payload.get("sub")
-    if user_id is None:
+    raw_sub = payload.get("sub")
+    if raw_sub is None:
         raise credentials_exception
-    
+
+    # sub is a JWT string claim (StringOrURI) by convention - asyncpg, unlike
+    # psycopg2, won't implicitly cast a string parameter against an Integer
+    # column, so it must be cast back to int explicitly here.
+    try:
+        user_id = int(raw_sub)
+    except (TypeError, ValueError):
+        raise credentials_exception
+
     # Fetch user from database
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if user is None:
         raise credentials_exception
     

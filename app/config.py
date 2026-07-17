@@ -1,5 +1,11 @@
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+# pydantic-settings resolves env_file relative to the process's CWD, not this
+# file - anchor it to the repo root so scripts run from subdirectories (e.g.
+# scripts/) still pick up the real .env instead of silently finding nothing.
+_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
 
 
 class Settings(BaseSettings):
@@ -10,8 +16,8 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     
     # Server
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    HOST: str = "localhost"
+    PORT: int = 8030
     
     # Database
     DATABASE_URL: str
@@ -68,9 +74,11 @@ class Settings(BaseSettings):
     # Drone orchard survey pipeline
     DRONE_IMAGE_STORAGE: str = "s3"  # "s3" or "local" - local writes to DRONE_LOCAL_IMAGE_DIR, no AWS credentials needed
     DRONE_LOCAL_IMAGE_DIR: str = "local_uploads"
+    DRONE_CAMERA_SOURCE: str = "synthetic"  # "synthetic" or "local_files" - local_files reads real photos from DRONE_CAMERA_SOURCE_DIR instead of generating them
+    DRONE_CAMERA_SOURCE_DIR: str = "local_uploads/drone-imagery/1"
     
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE
         case_sensitive = True
 
 

@@ -17,7 +17,7 @@ class Permit(Base):
     __tablename__ = "permits"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
     payment_id = Column(Integer, ForeignKey("payments.id"), nullable=True)
     
     permit_token_id = Column(String(255), unique=True, nullable=True)  # Blockchain token ID
@@ -60,8 +60,8 @@ class Payment(Base):
     __tablename__ = "payments"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
+
     amount = Column(Float, nullable=False)
     currency = Column(String(10), default="KES")
     

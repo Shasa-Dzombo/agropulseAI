@@ -110,7 +110,8 @@ class DroneAIService:
 
         backend_type = flight.backend_type.value
         backend = get_flight_backend(backend_type, flight.drone_id, home, mavlink_connection_string)
-        camera = get_camera_backend(backend_type)
+        local_image_dir = settings.DRONE_CAMERA_SOURCE_DIR if settings.DRONE_CAMERA_SOURCE == "local_files" else None
+        camera = get_camera_backend(backend_type, local_image_dir=local_image_dir)
         processor = MultispectralProcessor()
 
         try:

@@ -40,6 +40,7 @@ Base = declarative_base()
 
 class UserRole(enum.Enum):
     """User roles in the system."""
+    FARMER = "farmer"
     GROWER = "grower"
     HORTICULTURIST = "horticulturist"
     AGRONOMIST = "agronomist"
@@ -148,6 +149,7 @@ class DeviceType(enum.Enum):
     """Types of IoT devices."""
     WEATHER_STATION = "weather_station"
     SOIL_SENSOR = "soil_sensor"
+    MOISTURE_SENSOR = "moisture_sensor"
     CAMERA = "camera"
     DRONE = "drone"
     GATEWAY = "gateway"
@@ -300,6 +302,7 @@ class User(Base, TimestampMixin, SoftDeleteMixin, GeoLocationMixin):
     uuid = Column(UUID(as_uuid=True), unique=True, default=uuid.uuid4, nullable=False, index=True)
     
     # Authentication
+    username = Column(String(50), unique=True, nullable=True, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     phone_number = Column(String(20), unique=True, nullable=True, index=True)
     password_hash = Column(String(255), nullable=False)
@@ -383,7 +386,7 @@ class User(Base, TimestampMixin, SoftDeleteMixin, GeoLocationMixin):
     
     # Relationships
     referred_by = relationship("User", remote_side=[id], backref='referrals')
-    farms = relationship("Farm", back_populates="owner", cascade="all, delete-orphan")
+    farms = relationship("Farm", back_populates="owner", cascade="all, delete-orphan", foreign_keys="Farm.owner_id")
     diagnoses = relationship("Diagnosis", back_populates="user", foreign_keys="Diagnosis.user_id")
     transactions = relationship("Transaction", back_populates="user", foreign_keys="Transaction.user_id")
     devices = relationship("IoTDevice", back_populates="owner")
@@ -734,10 +737,11 @@ class Farm(Base, TimestampMixin, SoftDeleteMixin, AuditMixin, GeoLocationMixin, 
     average_yield_per_acre = Column(Float, nullable=True)
     
     # Relationships
-    owner = relationship("User", back_populates="farms")
+    owner = relationship("User", back_populates="farms", foreign_keys=[owner_id])
     fields = relationship("Field", back_populates="farm", cascade="all, delete-orphan")
     greenhouses = relationship("Greenhouse", back_populates="farm", cascade="all, delete-orphan")
     crops = relationship("CropPlanting", back_populates="farm", cascade="all, delete-orphan")
+    diagnoses = relationship("Diagnosis", back_populates="farm")
     devices = relationship("IoTDevice", back_populates="farm")
     weather_data = relationship("WeatherRecord", back_populates="farm")
     soil_tests = relationship("SoilTest", back_populates="farm")
@@ -1083,7 +1087,11 @@ class Diagnosis(Base, TimestampMixin, SoftDeleteMixin, VersionMixin):
     user = relationship("User", back_populates="diagnoses", foreign_keys=[user_id])
     farm = relationship("Farm", back_populates="diagnoses")
     crop = relationship("CropPlanting", back_populates="diagnoses")
-    alert = relationship("Alert", back_populates="diagnosis", uselist=False)
+    # Not a back_populates pair with Alert.diagnosis - diagnoses.alert_id and
+    # alerts.diagnosis_id are two independent FKs (this diagnosis's triggering
+    # alert, vs. an alert's resulting diagnosis), so each needs its own
+    # disambiguated relationship rather than mirroring one join condition.
+    alert = relationship("Alert", foreign_keys=[alert_id], uselist=False)
     
     # Expert reviews (many-to-many)
     expert_reviewers = relationship(
@@ -1178,13 +1186,12 @@ class Disease(Base, TimestampMixin):
     is_reportable = Column(Boolean, default=False)  # Requires government notification
     quarantine_required = Column(Boolean, default=False)
     
-    # Affected crops (many-to-many)
-    affected_crops = relationship(
-        "CropPlanting",
-        secondary=crop_disease_association,
-        lazy='dynamic'
-    )
-    
+    # Note: crop_disease_association maps crop *types* (a plain string
+    # category, e.g. "mango") to diseases for vulnerability lookups - it has
+    # no foreign key to crop_plantings, so it can't back a relationship to
+    # individual CropPlanting rows. Query crop_disease_association directly
+    # by crop_type instead.
+
     __table_args__ = (
         Index('idx_disease_category', 'disease_category'),
         Index('idx_disease_code', 'disease_code'),
@@ -1789,57 +1796,115 @@ class IoTDevice(Base, TimestampMixin, SoftDeleteMixin, GeoLocationMixin):
     is_active = Column(Boolean, default=True)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     last_data_at = Column(DateTime(timezone=True), nullable=True)
-    
+
+    # Power and data collection
+    battery_level = Column(Float, nullable=True)  # Percentage, 0-100
+    sampling_interval_seconds = Column(Integer, nullable=True)
+    installation_date = Column(Date, nullable=True)
+
     # Firmware
     firmware_version = Column(String(50), nullable=True)
     firmware_update_available = Column(Boolean, default=False)
+
+    # Relationships
+    owner = relationship("User", back_populates="devices", foreign_keys=[owner_id])
+    farm = relationship("Farm")
+    readings = relationship("SensorReading", back_populates="device", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_iot_device_owner', 'owner_id'),
+        Index('idx_iot_device_farm', 'farm_id'),
+    )
+
+
+class SensorReading(Base, TimestampMixin):
+    """Individual readings reported by an IoT device (soil/weather-station sensors, etc.)."""
+    __tablename__ = 'sensor_readings'
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(UUID(as_uuid=True), unique=True, default=uuid.uuid4, nullable=False)
+    device_id = Column(Integer, ForeignKey('iot_devices.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    # Common sensor values - nullable since a given device/reading only populates what it measures
+    temperature_celsius = Column(Float, nullable=True)
+    humidity_percentage = Column(Float, nullable=True)
+    soil_moisture_percentage = Column(Float, nullable=True)
+    soil_ph = Column(Float, nullable=True)
+    light_intensity_lux = Column(Float, nullable=True)
+    co2_ppm = Column(Float, nullable=True)
+    water_ph = Column(Float, nullable=True)
+
+    battery_voltage = Column(Float, nullable=True)
+    signal_strength = Column(Integer, nullable=True)  # dBm
+
+    # Raw payload for values not covered by the columns above
+    raw_data = Column(JSONB, nullable=True)
+
+    # Relationships
+    device = relationship("IoTDevice", back_populates="readings")
+
+    __table_args__ = (
+        Index('idx_sensor_reading_device_time', 'device_id', 'recorded_at'),
+    )
+
+
+class WeatherRecord(Base, TimestampMixin):
+    """Weather station / forecast records for a farm."""
+    __tablename__ = 'weather_records'
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(UUID(as_uuid=True), unique=True, default=uuid.uuid4, nullable=False)
+    farm_id = Column(Integer, ForeignKey('farms.id', ondelete='CASCADE'), nullable=False, index=True)
+
     # Timestamp
     record_date = Column(Date, nullable=False, index=True)
     record_timestamp = Column(DateTime(timezone=True), nullable=False)
-    
+
     # Source
     data_source = Column(String(100), nullable=False)  # iot_device, api, manual
     source_id = Column(String(200), nullable=True)
-    
+
     # Temperature
     temperature_min_celsius = Column(Float, nullable=True)
     temperature_max_celsius = Column(Float, nullable=True)
     temperature_avg_celsius = Column(Float, nullable=True)
-    
+
     # Humidity
     humidity_min_percentage = Column(Float, nullable=True)
     humidity_max_percentage = Column(Float, nullable=True)
     humidity_avg_percentage = Column(Float, nullable=True)
-    
+
     # Precipitation
     rainfall_mm = Column(Float, nullable=True)
     rainfall_probability = Column(Float, nullable=True)
-    
+
     # Wind
     wind_speed_avg_kmh = Column(Float, nullable=True)
     wind_speed_max_kmh = Column(Float, nullable=True)
     wind_direction_degrees = Column(Integer, nullable=True)
-    
+
     # Pressure
     pressure_hpa = Column(Float, nullable=True)
-    
+
     # Solar
     sunshine_hours = Column(Float, nullable=True)
     solar_radiation_wm2 = Column(Float, nullable=True)
     uv_index_max = Column(Float, nullable=True)
-    
+
     # Conditions
     weather_condition = Column(String(100), nullable=True)  # sunny, cloudy, rainy, etc.
     cloud_cover_percentage = Column(Integer, nullable=True)
     visibility_km = Column(Float, nullable=True)
-    
+
     # Forecast data
     is_forecast = Column(Boolean, default=False)
     forecast_confidence = Column(Float, nullable=True)
-    
+
     # Relationships
     farm = relationship("Farm", back_populates="weather_data")
-    
+
     __table_args__ = (
         Index('idx_weather_farm_date', 'farm_id', 'record_date'),
         Index('idx_weather_date', 'record_date'),
@@ -1977,7 +2042,7 @@ class Alert(Base, TimestampMixin):
 
     # Relationships
     farm = relationship("Farm", back_populates="alerts")
-    diagnosis = relationship("Diagnosis", back_populates="alert")
+    diagnosis = relationship("Diagnosis", foreign_keys=[diagnosis_id])
     
     __table_args__ = (
         Index('idx_alert_farm_severity', 'farm_id', 'severity'),

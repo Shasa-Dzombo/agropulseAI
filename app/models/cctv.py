@@ -37,9 +37,9 @@ class CCTV(Base):
     __tablename__ = "cctvs"
     
     id = Column(Integer, primary_key=True, index=True)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False)
     zone_id = Column(Integer, ForeignKey("zones.id"), nullable=True)
-    
+
     device_id = Column(String(100), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=True)
     cctv_type = Column(SQLEnum(CCTVType), nullable=False)
@@ -138,7 +138,7 @@ class CropHealthReading(Base):
     id = Column(Integer, primary_key=True, index=True)
     cctv_id = Column(Integer, ForeignKey("cctvs.id"), nullable=False)
     capture_id = Column(Integer, ForeignKey("cctv_captures.id"), nullable=True)
-    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False)
     zone_id = Column(Integer, ForeignKey("zones.id"), nullable=True)
     
     # NDVI-proxy calculation (Virtual Multispectral)
@@ -162,7 +162,7 @@ class CropHealthReading(Base):
     
     # Alert trigger
     alert_generated = Column(Boolean, default=False)
-    alert_id = Column(Integer, ForeignKey("alerts.id"), nullable=True)
+    alert_id = Column(Integer, ForeignKey("app_alerts.id"), nullable=True)
     
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -213,11 +213,11 @@ class SentryScoutHandshake(Base):
     # Sentry (CCTV) data
     cctv_id = Column(Integer, ForeignKey("cctvs.id"), nullable=False)
     health_reading_id = Column(Integer, ForeignKey("crop_health_readings.id"), nullable=False)
-    alert_id = Column(Integer, ForeignKey("alerts.id"), nullable=False)
-    
+    alert_id = Column(Integer, ForeignKey("app_alerts.id"), nullable=False)
+
     # Scout (Farmer) response
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    diagnosis_id = Column(Integer, ForeignKey("diagnoses.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
+    diagnosis_id = Column(Integer, ForeignKey("app_diagnoses.id"), nullable=True)
     
     # Handshake status
     status = Column(String(50), default="sentry_alert_sent")  # sentry_alert_sent, scout_acknowledged, scout_arrived, diagnosis_requested, diagnosis_completed

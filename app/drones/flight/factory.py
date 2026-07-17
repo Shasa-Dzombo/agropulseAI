@@ -7,7 +7,9 @@ and CI never attempt to talk to a serial port or UDP endpoint.
 from typing import Literal, Optional
 
 from app.drones.flight.backend import FlightBackend, GPSCoordinate
-from app.drones.flight.camera import CameraBackend, SimulatedCameraBackend, RealCameraBackend
+from app.drones.flight.camera import (
+    CameraBackend, SimulatedCameraBackend, LocalFileCameraBackend, RealCameraBackend,
+)
 
 BackendType = Literal["simulated", "mavlink"]
 
@@ -28,7 +30,14 @@ def get_flight_backend(
     return SimulatedFlightBackend(drone_id, home)
 
 
-def get_camera_backend(backend_type: BackendType) -> CameraBackend:
+def get_camera_backend(backend_type: BackendType, local_image_dir: Optional[str] = None) -> CameraBackend:
+    """
+    local_image_dir, when given, always wins regardless of backend_type - it
+    lets a demo fly a simulated (or real MAVLink) mission while reading real
+    photos from disk instead of generating synthetic ones.
+    """
+    if local_image_dir:
+        return LocalFileCameraBackend(local_image_dir)
     if backend_type == "mavlink":
         return RealCameraBackend()
     return SimulatedCameraBackend()

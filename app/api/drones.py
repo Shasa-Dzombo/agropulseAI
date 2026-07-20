@@ -4,25 +4,55 @@ from sqlalchemy import select
 from typing import List, Optional
 
 from app.database import get_db
+from app.models.diagnosis import Diagnosis, DiseaseCategory
 from app.models.user import Farm, User
 from app.schemas.drone import (
     CreateFlightRequest, DroneFlightResponse, DroneImageResponse,
-    DroneImageAnalysisResponse, FlightAnalysisSummary,
+    DroneImageAnalysisResponse, FlightAnalysisSummary, DiseaseAnswer,
 )
 from app.auth import get_current_farmer, get_current_user
 from app.config import settings
 from app.services.drone_ai_service import DroneAIService
 from app.services.local_image_storage import save_image_locally
+from app.services.supabase_image_storage import save_image_to_supabase
 
 router = APIRouter(prefix="/drones", tags=["Drone Orchard Survey"])
 
 
 def _build_service(db: AsyncSession) -> DroneAIService:
-    """Uses local-disk image storage when DRONE_IMAGE_STORAGE=local (e.g. no
-    real AWS credentials configured) instead of the real S3 uploader."""
+    """Uses local-disk or Supabase image storage per DRONE_IMAGE_STORAGE
+    instead of the default real S3 uploader (e.g. no AWS credentials
+    configured, or Supabase Storage preferred)."""
     if settings.DRONE_IMAGE_STORAGE == "local":
         return DroneAIService(db, image_uploader=save_image_locally)
+    if settings.DRONE_IMAGE_STORAGE == "supabase":
+        return DroneAIService(db, image_uploader=save_image_to_supabase)
     return DroneAIService(db)
+
+
+def _build_disease_answer(diagnosis: Optional[Diagnosis]) -> Optional[DiseaseAnswer]:
+    """Maps the real Diagnosis model's fields onto the lighter DiseaseAnswer
+    shape. Not done via DroneImageResponse.model_validate()'s automatic
+    from_attributes traversal - Diagnosis's field names (primary_diagnosis,
+    confidence_score, severity_level, treatment_recommendations) don't match
+    DiseaseAnswer's, so that would silently produce an all-defaults/empty
+    answer instead of an error."""
+    if diagnosis is None:
+        return None
+
+    treatments = diagnosis.treatment_recommendations or []
+    top_actions = [
+        t["action"] for t in treatments
+        if isinstance(t, dict) and t.get("priority") in (1, 2) and t.get("action")
+    ][:3]
+
+    return DiseaseAnswer(
+        disease_name=diagnosis.primary_diagnosis,
+        confidence=diagnosis.confidence_score,
+        severity=diagnosis.severity_level,
+        is_healthy=diagnosis.category == DiseaseCategory.HEALTHY,
+        top_treatment_actions=top_actions,
+    )
 
 
 @router.post("/flights", response_model=DroneFlightResponse, status_code=status.HTTP_201_CREATED)
@@ -50,6 +80,12 @@ async def create_mission(
             detail="mavlink_connection_string is required when backend_type is 'mavlink'",
         )
 
+    if flight_data.enable_disease_detection and not settings.KINDWISE_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Disease detection requested but KINDWISE_API_KEY is not configured",
+        )
+
     service = DroneAIService(db)
     flight = await service.plan_mission(
         farm_id=flight_data.farm_id,
@@ -61,6 +97,7 @@ async def create_mission(
         target_altitude_m=flight_data.target_altitude_m,
         backend_type=flight_data.backend_type,
         waypoints=[wp.model_dump() for wp in flight_data.waypoints],
+        disease_detection_enabled=flight_data.enable_disease_detection,
     )
     return DroneFlightResponse.model_validate(flight)
 
@@ -116,7 +153,29 @@ async def list_flight_images(
     """List captured aerial images for a flight."""
     service = DroneAIService(db)
     images = await service.list_flight_images(flight_id, current_user.id)
-    return [DroneImageResponse.model_validate(i) for i in images]
+    # Built explicitly rather than DroneImageResponse.model_validate(image):
+    # image.diagnosis is a raw Diagnosis ORM object, and DiseaseAnswer isn't
+    # itself from_attributes-configured, so letting model_validate try to
+    # auto-coerce it raises a ValidationError - _build_disease_answer does
+    # the real field mapping instead.
+    return [
+        DroneImageResponse(
+            id=image.id,
+            flight_id=image.flight_id,
+            waypoint_index=image.waypoint_index,
+            tree_id=image.tree_id,
+            rgb_url=image.rgb_url,
+            nir_url=image.nir_url,
+            latitude=image.latitude,
+            longitude=image.longitude,
+            altitude=image.altitude,
+            ground_sampling_distance_cm=image.ground_sampling_distance_cm,
+            diagnosis_id=image.diagnosis_id,
+            diagnosis=_build_disease_answer(image.diagnosis),
+            captured_at=image.captured_at,
+        )
+        for image in images
+    ]
 
 
 @router.get("/flights/{flight_id}/analysis", response_model=FlightAnalysisSummary)

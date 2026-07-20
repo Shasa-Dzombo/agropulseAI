@@ -5,6 +5,7 @@ imagery at each photo waypoint -> run NDVI/vegetation-index analysis -> persist
 flight, telemetry, imagery and analysis to Postgres.
 """
 
+import logging
 import math
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -18,6 +19,7 @@ from app.drones.flight import _console  # noqa: F401 - must run before any drone
 
 from drone_orchard_system.multispectral_imaging import MultispectralImage, MultispectralProcessor
 
+from app.config import settings
 from app.drones.flight.backend import GPSCoordinate, Waypoint
 from app.drones.flight.factory import get_camera_backend, get_flight_backend
 from app.models.drone import (
@@ -30,6 +32,12 @@ from app.models.drone import (
 )
 from app.models.user import Farm
 from app.services.ai_service import aws_ai_service
+from app.services._kindwise_client_loader import CropType, KindwiseAPIClient
+from app.services.kindwise_crop_mapping import map_farm_crop_type_to_kindwise
+from app.services.kindwise_disease_service import get_kindwise_client, run_disease_detection
+from app.services.plant_stress_assessment import assess_plant_stress
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_float(value: float) -> Optional[float]:
@@ -62,6 +70,7 @@ class DroneAIService:
         target_altitude_m: float,
         backend_type: str,
         waypoints: List[dict],
+        disease_detection_enabled: bool = False,
     ) -> DroneFlight:
         flight = DroneFlight(
             farm_id=farm_id,
@@ -74,6 +83,7 @@ class DroneAIService:
             home_altitude=home_altitude,
             target_altitude_m=target_altitude_m,
             mission_plan=waypoints,
+            disease_detection_enabled=disease_detection_enabled,
         )
         self.db.add(flight)
         await self.db.commit()
@@ -114,6 +124,27 @@ class DroneAIService:
         camera = get_camera_backend(backend_type, local_image_dir=local_image_dir)
         processor = MultispectralProcessor()
 
+        # Resolved once per mission, not per photo - Kindwise is a paid,
+        # rate-limited external API and the farm's crop_type doesn't change
+        # mid-flight. run_disease_detection_for_mission stays False (no
+        # per-image Kindwise calls) unless both the client and a mapped
+        # crop_type are available.
+        kindwise_client: Optional[KindwiseAPIClient] = None
+        kindwise_crop_type: Optional[CropType] = None
+        if flight.disease_detection_enabled:
+            farm_result = await self.db.execute(select(Farm).where(Farm.id == flight.farm_id))
+            farm = farm_result.scalar_one_or_none()
+            kindwise_crop_type = map_farm_crop_type_to_kindwise(farm.crop_type if farm else None)
+            if kindwise_crop_type is None:
+                logger.warning(
+                    "Flight %s: disease_detection_enabled but farm crop_type %r has no Kindwise mapping - "
+                    "skipping disease detection for this mission",
+                    flight.id, farm.crop_type if farm else None,
+                )
+            else:
+                kindwise_client = get_kindwise_client()  # None + logged if KINDWISE_API_KEY missing
+        run_disease_detection_for_mission = kindwise_client is not None and kindwise_crop_type is not None
+
         try:
             await backend.connect()
             await backend.upload_mission(waypoints)
@@ -137,7 +168,9 @@ class DroneAIService:
 
                 if sample.action == "take_photo":
                     await self._capture_and_analyze(
-                        camera, processor, waypoints[sample.waypoint_index], sample, flight.id
+                        camera, processor, waypoints[sample.waypoint_index], sample, flight.id,
+                        flight.requested_by_id, run_disease_detection_for_mission,
+                        kindwise_client, kindwise_crop_type,
                     )
 
             await backend.return_to_launch()
@@ -160,7 +193,11 @@ class DroneAIService:
         await self.db.refresh(flight)
         return flight
 
-    async def _capture_and_analyze(self, camera, processor: MultispectralProcessor, waypoint: Waypoint, sample, flight_id: int) -> None:
+    async def _capture_and_analyze(
+        self, camera, processor: MultispectralProcessor, waypoint: Waypoint, sample, flight_id: int,
+        farmer_id: int, run_disease_detection_for_mission: bool,
+        kindwise_client: Optional[KindwiseAPIClient], kindwise_crop_type: Optional[CropType],
+    ) -> None:
         image = await camera.capture(waypoint, sample.altitude)
 
         rgb_url, nir_url = await self._upload_image_bands(image, flight_id, sample.waypoint_index)
@@ -181,6 +218,7 @@ class DroneAIService:
 
         indices = processor.process_multispectral_image(image)
         ndvi = _safe_float(indices.ndvi)
+        stress = assess_plant_stress(indices)
         self.db.add(DroneImageAnalysis(
             image_id=drone_image.id,
             ndvi=ndvi,
@@ -189,7 +227,15 @@ class DroneAIService:
             savi=_safe_float(indices.savi),
             evi=_safe_float(indices.evi),
             health_status=indices.get_health_status().value if ndvi is not None else None,
+            stress_level=stress.stress_level,
+            stress_indicators=stress.stress_indicators,
         ))
+
+        if run_disease_detection_for_mission:
+            drone_image.diagnosis_id = await run_disease_detection(
+                self.db, kindwise_client, kindwise_crop_type, image.rgb, rgb_url,
+                farmer_id, sample.latitude, sample.longitude,
+            )
 
     async def _upload_image_bands(self, image: MultispectralImage, flight_id: int, waypoint_index: int) -> tuple:
         folder = f"drone-imagery/{flight_id}"

@@ -30,7 +30,10 @@ class Diagnosis(Base):
     id = Column(Integer, primary_key=True, index=True)
     farmer_id = Column(Integer, ForeignKey("app_users.id"), nullable=False)
     alert_id = Column(Integer, ForeignKey("app_alerts.id"), nullable=True)
-    permit_id = Column(Integer, ForeignKey("permits.id"), nullable=False)
+    # Nullable: the paid /diagnoses endpoint always sets a real permit_id
+    # (a permit must be purchased first); the drone survey pipeline creates
+    # diagnoses proactively per captured photo with no permit purchase.
+    permit_id = Column(Integer, ForeignKey("permits.id"), nullable=True)
     
     status = Column(SQLEnum(DiagnosisStatus), default=DiagnosisStatus.PENDING)
     

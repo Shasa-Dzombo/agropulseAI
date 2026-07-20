@@ -24,6 +24,7 @@ class CreateFlightRequest(BaseModel):
     target_altitude_m: float = 30.0
     backend_type: str = Field("simulated", pattern="^(simulated|mavlink)$")
     mavlink_connection_string: Optional[str] = None
+    enable_disease_detection: bool = False
     waypoints: List[WaypointIn] = Field(..., min_length=1)
 
 
@@ -38,6 +39,10 @@ class DroneFlightResponse(BaseModel):
     home_longitude: float
     home_altitude: float
     target_altitude_m: float
+    disease_detection_enabled: bool = False
+    # Yield placeholders - always null today, see app/models/drone.py.
+    projected_yield_kg_per_hectare: Optional[float] = None
+    yield_projection_model_version: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     battery_start_pct: Optional[float] = None
@@ -47,6 +52,18 @@ class DroneFlightResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DiseaseAnswer(BaseModel):
+    """Lightweight disease answer embedded on DroneImageResponse. Built from
+    the real app.models.diagnosis.Diagnosis row - full detail (all treatment
+    options, EPPO code, alternative diagnoses) is available via
+    GET /diagnoses/{diagnosis_id}."""
+    disease_name: Optional[str] = None
+    confidence: Optional[float] = None
+    severity: Optional[str] = None
+    is_healthy: bool = False
+    top_treatment_actions: List[str] = []
 
 
 class DroneImageResponse(BaseModel):
@@ -60,6 +77,8 @@ class DroneImageResponse(BaseModel):
     longitude: float
     altitude: float
     ground_sampling_distance_cm: Optional[float] = None
+    diagnosis_id: Optional[int] = None
+    diagnosis: Optional[DiseaseAnswer] = None
     captured_at: Optional[datetime] = None
 
     class Config:
@@ -74,6 +93,8 @@ class DroneImageAnalysisResponse(BaseModel):
     savi: Optional[float] = None
     evi: Optional[float] = None
     health_status: Optional[str] = None
+    stress_level: Optional[str] = None
+    stress_indicators: List[str] = []
 
     class Config:
         from_attributes = True

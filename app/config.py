@@ -72,11 +72,29 @@ class Settings(BaseSettings):
     MONTHLY_SUBSCRIPTION: float = 1800.0
 
     # Drone orchard survey pipeline
-    DRONE_IMAGE_STORAGE: str = "s3"  # "s3" or "local" - local writes to DRONE_LOCAL_IMAGE_DIR, no AWS credentials needed
+    DRONE_IMAGE_STORAGE: str = "s3"  # "s3" | "local" | "supabase" - local writes to DRONE_LOCAL_IMAGE_DIR, no credentials needed; supabase uses SUPABASE_STORAGE_* below
     DRONE_LOCAL_IMAGE_DIR: str = "local_uploads"
     DRONE_CAMERA_SOURCE: str = "synthetic"  # "synthetic" or "local_files" - local_files reads real photos from DRONE_CAMERA_SOURCE_DIR instead of generating them
     DRONE_CAMERA_SOURCE_DIR: str = "local_uploads/drone-imagery/1"
-    
+
+    # Supabase Storage (S3-compatible) - alternative to AWS S3 for drone imagery.
+    # Separate from Supabase's Postgres connection (see app/db_config.py's
+    # EnterpriseDBConfig.SUPABASE_URL) - these are Storage-specific S3 access
+    # keys from the Supabase dashboard, not the project's anon/service-role key.
+    SUPABASE_PROJECT_URL: Optional[str] = None  # e.g. https://<project-ref>.supabase.co
+    SUPABASE_STORAGE_ENDPOINT_URL: Optional[str] = None  # e.g. https://<project-ref>.supabase.co/storage/v1/s3
+    SUPABASE_STORAGE_ACCESS_KEY_ID: Optional[str] = None
+    SUPABASE_STORAGE_SECRET_ACCESS_KEY: Optional[str] = None
+    SUPABASE_STORAGE_BUCKET: Optional[str] = None
+
+    # Kindwise crop.health disease detection (opt-in, paid, drone pipeline only)
+    KINDWISE_API_KEY: Optional[str] = None
+    KINDWISE_CACHE_DIR: str = "kindwise_cache"
+    KINDWISE_BASE_URL: Optional[str] = None  # override only if Kindwise's endpoint changes - defaults to the client's own https://crop.kindwise.com/api/v1
+    KINDWISE_TIMEOUT: int = 30
+    KINDWISE_MAX_REQUESTS_PER_MINUTE: int = 60
+    KINDWISE_MAX_REQUESTS_PER_DAY: int = 5000
+
     class Config:
         env_file = _ENV_FILE
         case_sensitive = True

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+import asyncio
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
@@ -7,14 +9,22 @@ from app.database import get_db
 from app.models.diagnosis import Diagnosis, DiseaseCategory
 from app.models.user import Farm, User
 from app.schemas.drone import (
-    CreateFlightRequest, DroneFlightResponse, DroneImageResponse,
+    DroneFlightResponse, DroneImageResponse,
     DroneImageAnalysisResponse, FlightAnalysisSummary, DiseaseAnswer,
+    FarmWeatherResponse, WeatherSnapshotOut, FlightConditionOut,
+    DiseasePressureOut, AgriculturalAlertOut,
+    CreateManualFlightRequest, CompleteFlightRequest, KmlWaypointsResponse,
 )
 from app.auth import get_current_farmer, get_current_user
 from app.config import settings
 from app.services.drone_ai_service import DroneAIService
+from app.services.kml_mission_parser import parse_kml_waypoints
 from app.services.local_image_storage import save_image_locally
 from app.services.supabase_image_storage import save_image_to_supabase
+from app.services.weather_service import (
+    assess_disease_pressure, assess_flight_conditions,
+    fetch_weather_snapshot, geocode_location, get_openweather_client,
+)
 
 router = APIRouter(prefix="/drones", tags=["Drone Orchard Survey"])
 
@@ -55,15 +65,50 @@ def _build_disease_answer(diagnosis: Optional[Diagnosis]) -> Optional[DiseaseAns
     )
 
 
-@router.post("/flights", response_model=DroneFlightResponse, status_code=status.HTTP_201_CREATED)
-async def create_mission(
-    flight_data: CreateFlightRequest,
+@router.post("/flights/parse-kml", response_model=KmlWaypointsResponse)
+async def parse_kml_mission(
+    file: UploadFile = File(...),
+    action: str = Form("take_photo"),
+    default_altitude: float = Form(30.0),
+    speed: float = Form(10.0),
+    gimbal_pitch: float = Form(-90.0),
+    current_user: User = Depends(get_current_farmer),
+):
+    """
+    Converts an uploaded .kml file's Placemarks into waypoints, one per
+    Placemark's first coordinate, in document order (each Placemark's <name>
+    becomes that waypoint's tree_id, when present). Does not create a flight
+    or touch the DB - review/edit the returned waypoints, then attach them as
+    mission_plan on POST /flights/manual for nearest-GPS photo auto-tagging.
+    """
+    kml_bytes = await file.read()
+    try:
+        waypoints, warnings = parse_kml_waypoints(
+            kml_bytes, action=action, default_altitude=default_altitude,
+            speed=speed, gimbal_pitch=gimbal_pitch,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return KmlWaypointsResponse(waypoints=waypoints, warnings=warnings)
+
+
+@router.post("/flights/manual", response_model=DroneFlightResponse, status_code=status.HTTP_201_CREATED)
+async def create_manual_flight(
+    flight_data: CreateManualFlightRequest,
     current_user: User = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Plan a drone orchard survey mission. Does not fly it - call
-    POST /flights/{flight_id}/execute to run it.
+    Start a flight that's being flown manually outside this system (e.g. DJI's
+    own app over the remote controller). Status is IN_PROGRESS immediately;
+    push captured photos in via POST /flights/{flight_id}/images as they're
+    taken, then finish with POST /flights/{flight_id}/complete.
+
+    mission_plan (optional, e.g. from POST /flights/parse-kml) is a
+    reference/briefing waypoint list only - it is never flown by this system,
+    but its tree_id values (if any) are used to auto-tag incoming photos by
+    nearest real-GPS match.
     """
     result = await db.execute(
         select(Farm).where(Farm.id == flight_data.farm_id, Farm.owner_id == current_user.id)
@@ -74,49 +119,74 @@ async def create_mission(
             detail="Farm not found or you don't have permission",
         )
 
-    if flight_data.backend_type == "mavlink" and not flight_data.mavlink_connection_string:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="mavlink_connection_string is required when backend_type is 'mavlink'",
-        )
-
-    if flight_data.enable_disease_detection and not settings.KINDWISE_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Disease detection requested but KINDWISE_API_KEY is not configured",
-        )
-
-    service = DroneAIService(db)
-    flight = await service.plan_mission(
+    service = _build_service(db)
+    flight = await service.start_manual_flight(
         farm_id=flight_data.farm_id,
         user_id=current_user.id,
         drone_id=flight_data.drone_id,
         home_latitude=flight_data.home_latitude,
         home_longitude=flight_data.home_longitude,
         home_altitude=flight_data.home_altitude,
-        target_altitude_m=flight_data.target_altitude_m,
-        backend_type=flight_data.backend_type,
-        waypoints=[wp.model_dump() for wp in flight_data.waypoints],
-        disease_detection_enabled=flight_data.enable_disease_detection,
+        mission_plan=[wp.model_dump() for wp in flight_data.mission_plan] if flight_data.mission_plan else None,
     )
     return DroneFlightResponse.model_validate(flight)
 
 
-@router.post("/flights/{flight_id}/execute", response_model=DroneFlightResponse)
-async def execute_mission(
+@router.post("/flights/{flight_id}/images", response_model=DroneImageResponse, status_code=status.HTTP_201_CREATED)
+async def upload_manual_flight_image(
     flight_id: int,
-    mavlink_connection_string: Optional[str] = Body(None, embed=True),
+    rgb: UploadFile = File(...),
+    nir: Optional[UploadFile] = File(None),
+    red_edge: Optional[UploadFile] = File(None),
+    tree_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Fly a planned mission: navigate the waypoints, capture imagery, run NDVI
-    analysis, persist results. mavlink_connection_string is required only
-    when the flight's backend_type is 'mavlink' (e.g. "udp:0.0.0.0:14550" or
-    a serial device path) - ignored for the simulated backend.
+    Push one captured photo (real DJI multispectral bands, or any RGB photo)
+    onto an in-progress manual flight - analyzed and persisted immediately.
+    nir/red_edge are optional real band files; if nir is omitted, NDVI falls
+    back to the same green-channel placeholder LocalFileCameraBackend uses
+    when no real NIR file exists (not real near-infrared data).
     """
     service = _build_service(db)
-    flight = await service.execute_mission(flight_id, current_user.id, mavlink_connection_string=mavlink_connection_string)
+    rgb_bytes = await rgb.read()
+    nir_bytes = await nir.read() if nir is not None else None
+    red_edge_bytes = await red_edge.read() if red_edge is not None else None
+
+    image = await service.ingest_captured_image(
+        flight_id, current_user.id, rgb_bytes, nir_bytes, red_edge_bytes, tree_id=tree_id,
+    )
+    return DroneImageResponse(
+        id=image.id,
+        flight_id=image.flight_id,
+        waypoint_index=image.waypoint_index,
+        tree_id=image.tree_id,
+        rgb_url=image.rgb_url,
+        nir_url=image.nir_url,
+        latitude=image.latitude,
+        longitude=image.longitude,
+        altitude=image.altitude,
+        ground_sampling_distance_cm=image.ground_sampling_distance_cm,
+        diagnosis_id=image.diagnosis_id,
+        diagnosis=None,
+        captured_at=image.captured_at,
+    )
+
+
+@router.post("/flights/{flight_id}/complete", response_model=DroneFlightResponse)
+async def complete_manual_flight(
+    flight_id: int,
+    body: CompleteFlightRequest,
+    current_user: User = Depends(get_current_farmer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Marks a manual-ingest flight COMPLETED or ABORTED."""
+    service = DroneAIService(db)
+    flight = await service.complete_manual_flight(
+        flight_id, current_user.id, body.status,
+        error_message=body.error_message, battery_end_pct=body.battery_end_pct,
+    )
     return DroneFlightResponse.model_validate(flight)
 
 
@@ -188,3 +258,76 @@ async def get_flight_analysis(
     service = DroneAIService(db)
     summary = await service.get_flight_analysis_summary(flight_id, current_user.id)
     return FlightAnalysisSummary(**summary)
+
+
+@router.get("/weather", response_model=FarmWeatherResponse)
+async def get_farm_weather(
+    farm_id: int,
+    current_user: User = Depends(get_current_farmer),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Real current weather, UAV flight-suitability, and disease-pressure
+    context for a farm - usable to check conditions before a mission is even
+    planned (DroneFlightResponse.weather_* only populates once a mission has
+    actually been executed). Uses the farm's latitude/longitude when set;
+    otherwise falls back to geocoding Farm.location (a real place name, e.g.
+    "Thika, KE" - distinct from Farm.name) via OpenWeatherMap's Geocoding API.
+    """
+    result = await db.execute(
+        select(Farm).where(Farm.id == farm_id, Farm.owner_id == current_user.id)
+    )
+    farm = result.scalar_one_or_none()
+    if farm is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found or you don't have permission")
+
+    client = get_openweather_client()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OPENWEATHER_API_KEY is not configured")
+
+    latitude, longitude = farm.latitude, farm.longitude
+    if latitude is None or longitude is None:
+        if not farm.location:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Farm has no latitude/longitude and no location set - set one of them first",
+            )
+        geocoded = await geocode_location(client, farm.location)
+        if geocoded is None:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not resolve farm location '{farm.location}' to coordinates",
+            )
+        latitude, longitude = geocoded
+
+    weather = await fetch_weather_snapshot(client, latitude, longitude)
+    if weather is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch current weather from OpenWeatherMap")
+
+    forecast = await asyncio.to_thread(client.get_5day_forecast, latitude, longitude)
+    alerts = await asyncio.to_thread(client.get_agricultural_alerts, latitude, longitude, weather, forecast)
+
+    conditions = assess_flight_conditions(weather)
+    disease_pressure = assess_disease_pressure(weather)
+
+    return FarmWeatherResponse(
+        farm_id=farm.id,
+        current=WeatherSnapshotOut(
+            temperature_c=weather.temperature,
+            feels_like_c=weather.feels_like,
+            humidity_pct=weather.humidity,
+            wind_speed_ms=weather.wind_speed,
+            rainfall_mm=weather.rainfall,
+            conditions=weather.description,
+            observed_at=weather.timestamp,
+        ),
+        flight_conditions=FlightConditionOut(suitable=conditions.suitable, warnings=conditions.warnings),
+        disease_pressure=DiseasePressureOut(risk_level=disease_pressure.risk_level, indicators=disease_pressure.indicators),
+        agricultural_alerts=[
+            AgriculturalAlertOut(
+                alert_type=a.alert_type, severity=a.severity,
+                description=a.description, recommendations=a.recommendations,
+            )
+            for a in alerts
+        ],
+    )

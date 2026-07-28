@@ -2,36 +2,21 @@
 Weather API Integration Module
 ==============================
 
-Integrations with multiple weather data providers for comprehensive
-agricultural weather intelligence.
+Integrations with weather data providers for agricultural weather
+intelligence.
 
-Providers:
-- OpenWeatherMap: Global coverage, hourly/daily forecasts
-- AccuWeather: High accuracy, severe weather alerts
-- Tomorrow.io (ClimaCell): Hyperlocal forecasts, field-level data
-- African weather services: ICPAC, AGRHYMET, local met departments
+Only OpenWeatherMapClient is real. This package previously imported five
+sibling modules (accuweather, tomorrow_io, african_services,
+weather_aggregator, historical_data, alerts) that don't exist anywhere in
+this directory - that made `import app.integrations.weather` fail outright.
+Add real modules back here only once they're actually built.
 """
 
-from .openweather import OpenWeatherMapClient
-from .accuweather import AccuWeatherClient
-from .tomorrow_io import TomorrowIOClient
-from .african_services import (
-    ICPACClient,
-    AGRHYMETClient,
-    LocalMeteorologicalClient,
-)
-from .weather_aggregator import WeatherAggregator
-from .historical_data import HistoricalWeatherService
-from .alerts import WeatherAlertService
+from .openweather import AgriculturalAlert, ForecastData, OpenWeatherMapClient, WeatherData
 
 __all__ = [
     'OpenWeatherMapClient',
-    'AccuWeatherClient',
-    'TomorrowIOClient',
-    'ICPACClient',
-    'AGRHYMETClient',
-    'LocalMeteorologicalClient',
-    'WeatherAggregator',
-    'HistoricalWeatherService',
-    'WeatherAlertService',
+    'WeatherData',
+    'ForecastData',
+    'AgriculturalAlert',
 ]

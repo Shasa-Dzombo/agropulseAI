@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     KINDWISE_MAX_REQUESTS_PER_MINUTE: int = 60
     KINDWISE_MAX_REQUESTS_PER_DAY: int = 5000
 
+    # OpenWeatherMap (optional, opt-in - drone pipeline pre-flight/weather
+    # context). Free tier: 1,000 calls/day. Unset = weather features skip
+    # gracefully, same pattern as KINDWISE_API_KEY above.
+    OPENWEATHER_API_KEY: Optional[str] = None
+
     class Config:
         env_file = _ENV_FILE
         case_sensitive = True

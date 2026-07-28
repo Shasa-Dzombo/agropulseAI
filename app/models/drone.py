@@ -6,11 +6,24 @@ import enum
 
 
 class DroneBackendType(str, enum.Enum):
+    # SIMULATED/MAVLINK backed an autonomous mission-execution pathway
+    # (plan_mission/execute_mission + a FlightBackend implementation) that
+    # was removed - this project's actual hardware is flown manually and
+    # never spoke MAVLink. Kept only so any pre-existing rows/enum values
+    # still deserialize; no code path creates new rows with these values.
     SIMULATED = "simulated"
     MAVLINK = "mavlink"
+    # The only backend type new flights use - images are pushed in after
+    # the fact (or live, via scripts/watch_and_upload_dji_images.py) from a
+    # manually-flown real drone. See DroneAIService.start_manual_flight().
+    MANUAL_INGEST = "manual_ingest"
 
 
 class DroneFlightStatus(str, enum.Enum):
+    # No code path sets PLANNED anymore (it belonged to the removed
+    # plan_mission/execute_mission pathway) - kept for the same reason as
+    # DroneBackendType.SIMULATED/MAVLINK above. Manual-ingest flights go
+    # straight to IN_PROGRESS.
     PLANNED = "planned"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -26,15 +39,22 @@ class DroneFlight(Base):
     requested_by_id = Column(Integer, ForeignKey("app_users.id"), nullable=False, index=True)
     drone_id = Column(String(100), nullable=False)
 
-    backend_type = Column(SQLEnum(DroneBackendType), nullable=False, default=DroneBackendType.SIMULATED)
-    status = Column(SQLEnum(DroneFlightStatus), nullable=False, default=DroneFlightStatus.PLANNED, index=True)
+    backend_type = Column(SQLEnum(DroneBackendType), nullable=False, default=DroneBackendType.MANUAL_INGEST)
+    status = Column(SQLEnum(DroneFlightStatus), nullable=False, default=DroneFlightStatus.IN_PROGRESS, index=True)
 
     home_latitude = Column(Float, nullable=False)
     home_longitude = Column(Float, nullable=False)
     home_altitude = Column(Float, nullable=False)
-    target_altitude_m = Column(Float, nullable=False)
+    # Nullable: always None now - belonged to the removed autonomous
+    # mission-execution pathway, never applicable to MANUAL_INGEST flights.
+    target_altitude_m = Column(Float, nullable=True)
 
-    mission_plan = Column(JSON, nullable=False)  # serialized waypoint list at request time
+    # Optional reference/briefing waypoint list (e.g. KML-derived via
+    # app.services.kml_mission_parser), attached at start_manual_flight()
+    # time - nothing in this system flies it. Used only to auto-tag incoming
+    # photos with the nearest waypoint's tree_id; see
+    # DroneAIService.ingest_captured_image().
+    mission_plan = Column(JSON, nullable=True)
 
     disease_detection_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
 
@@ -44,6 +64,19 @@ class DroneFlight(Base):
     # TODO: populate once real calibration data is available.
     projected_yield_kg_per_hectare = Column(Float, nullable=True)
     yield_projection_model_version = Column(String(50), nullable=True)
+
+    # Real OpenWeatherMap conditions at the home coordinates, fetched once at
+    # start_manual_flight() time (app.services.weather_service). Advisory
+    # only - all nullable, stays None when OPENWEATHER_API_KEY is unset or
+    # the lookup fails; never blocks a mission either way.
+    weather_temperature_c = Column(Float, nullable=True)
+    weather_humidity_pct = Column(Integer, nullable=True)
+    weather_wind_speed_ms = Column(Float, nullable=True)
+    weather_conditions = Column(String(100), nullable=True)
+    weather_flight_suitable = Column(Boolean, nullable=True)
+    weather_warnings = Column(JSON, nullable=True)
+    weather_disease_pressure = Column(String(20), nullable=True)
+    weather_checked_at = Column(DateTime(timezone=True), nullable=True)
 
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -56,6 +89,10 @@ class DroneFlight(Base):
 
 
 class DroneTelemetryLog(Base):
+    """Per-waypoint telemetry samples, written only by the removed
+    execute_mission() pathway - no current code path inserts rows here.
+    Table/model kept as-is rather than dropped; not written to by
+    manual-ingest flights."""
     __tablename__ = "drone_telemetry_logs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -121,5 +158,15 @@ class DroneImageAnalysis(Base):
     # computed (no external API, no opt-in needed), unlike disease_id above.
     stress_level = Column(String(20), nullable=True)
     stress_indicators = Column(JSON, nullable=True)
+
+    # Excess-Green-Index canopy coverage/vigor screening
+    # (app.services.canopy_vigor_assessment) - real math over the plain RGB
+    # frame, not a trained model. Always computed like stress_level above;
+    # this is the free/local counterpart to the opt-in, paid Kindwise
+    # diagnosis on diagnosis_id - a scouting cue, not a diagnosis.
+    canopy_coverage_pct = Column(Float, nullable=True)
+    vigor_level = Column(String(20), nullable=True)
+    vigor_indicators = Column(JSON, nullable=True)
+    low_vigor_regions = Column(JSON, nullable=True)
 
     analyzed_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -3,8 +3,8 @@ Fixtures for the drone orchard survey pipeline tests. Deliberately isolated
 from the repo's root tests/ directory (tests/conftest.py imports several
 modules that don't exist anywhere in the codebase - app.database.base,
 app.api.main, app.core.config, app.core.security - and can't be collected).
-Everything here runs against an in-memory SQLite DB and the simulated
-flight/camera backends - no real hardware or Postgres required.
+Everything here runs against an in-memory SQLite DB - no real hardware or
+Postgres required.
 """
 
 import pytest
@@ -107,11 +107,3 @@ async def client(db_session):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     main_module.app.dependency_overrides.clear()
-
-
-def sample_waypoints():
-    return [
-        {"latitude": 37.7751, "longitude": -122.4194, "altitude": 30.0, "action": "take_photo", "tree_id": "mango_row1_tree0"},
-        {"latitude": 37.7752, "longitude": -122.4194, "altitude": 30.0, "action": "take_photo", "tree_id": "mango_row1_tree1"},
-        {"latitude": 37.7753, "longitude": -122.4194, "altitude": 30.0, "action": "fly_through"},
-    ]

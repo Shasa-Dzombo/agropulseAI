@@ -24,9 +24,19 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MultispectralImage", "CameraBackend", "SimulatedCameraBackend",
     "LocalFileCameraBackend", "RealCameraBackend",
+    "green_channel_as_nir_placeholder",
 ]
 
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
+
+
+def green_channel_as_nir_placeholder(rgb: np.ndarray) -> np.ndarray:
+    """Clearly-approximate placeholder for a missing real NIR band - NOT a
+    real near-infrared reading, NDVI computed from it is not trustworthy.
+    Used by LocalFileCameraBackend below and by the manual DJI-ingestion
+    upload endpoint (app/api/drones.py) when a caller doesn't supply a real
+    NIR file, so the pipeline stays runnable either way."""
+    return rgb[:, :, 1]  # green channel, BGR-indexed
 
 
 class CameraBackend(ABC):
@@ -125,7 +135,7 @@ class LocalFileCameraBackend(CameraBackend):
             )
             self._warned_missing_nir.add(rgb_filename)
 
-        return rgb[:, :, 1]  # green channel, BGR-indexed - see class docstring
+        return green_channel_as_nir_placeholder(rgb)
 
     async def capture(self, waypoint: Waypoint, altitude_m: float) -> MultispectralImage:
         filename = self._rgb_files[self._index % len(self._rgb_files)]

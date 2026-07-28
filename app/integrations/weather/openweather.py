@@ -105,10 +105,47 @@ class OpenWeatherMapClient:
         # API endpoints
         self.base_url = 'https://api.openweathermap.org/data/2.5'
         self.onecall_url = 'https://api.openweathermap.org/data/3.0/onecall'
-        
+        self.geocode_url = 'https://api.openweathermap.org/geo/1.0/direct'
+
         # Agricultural API (requires special subscription)
         self.agro_url = 'https://api.openweathermap.org/agro/1.0'
-        
+
+    def geocode(self, location_name: str) -> Optional[Tuple[float, float]]:
+        """
+        Resolve a real place name (e.g. 'Nairobi,KE' or 'Thika') to
+        (latitude, longitude) via OpenWeatherMap's free Geocoding API - part
+        of the same free tier as current weather, no separate subscription.
+
+        Args:
+            location_name: A city/town name, optionally 'City,CountryCode'.
+
+        Returns:
+            (latitude, longitude), or None if no match was found or the
+            request failed.
+        """
+        params = {
+            'q': location_name,
+            'limit': 1,
+            'appid': self.api_key,
+        }
+
+        try:
+            response = requests.get(self.geocode_url, params=params, timeout=10)
+            response.raise_for_status()
+
+            results = response.json()
+            if not results:
+                logger.warning(f"Geocoding found no match for '{location_name}'")
+                return None
+
+            latitude, longitude = results[0]['lat'], results[0]['lon']
+            logger.info(f"Geocoded '{location_name}' -> {latitude},{longitude}")
+            return latitude, longitude
+
+        except Exception as e:
+            logger.error(f"Failed to geocode '{location_name}': {e}")
+            return None
+
     def get_current_weather(
         self,
         latitude: float,

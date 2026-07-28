@@ -100,3 +100,6 @@ local_uploads/
 
 # docs
 docs/
+
+#claude permissions
+.claude/

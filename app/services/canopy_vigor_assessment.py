@@ -20,7 +20,7 @@ tracks, so there is no plot grid to key off.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -43,6 +43,7 @@ class CanopyRegion:
     area_px: int
     coverage_pct: float  # % of this region's own bounding box that is vegetation
     centroid: Dict[str, float]  # {row, col}
+    area_m2: Optional[float] = None  # only set when a ground-sample-distance was supplied
 
 
 @dataclass
@@ -51,6 +52,18 @@ class CanopyVigorAssessment:
     vigor_level: str
     vigor_indicators: List[str] = field(default_factory=list)
     low_vigor_regions: List[dict] = field(default_factory=list)
+    total_canopy_area_m2: Optional[float] = None  # only set when a ground-sample-distance was supplied
+
+
+def _pixel_area_m2(ground_sampling_distance_cm: Optional[float]) -> Optional[float]:
+    """Real-world area of one pixel, in m^2, from a ground-sample-distance
+    given in cm/pixel (e.g. supplied by the caller from known flight
+    altitude + camera field of view - this project has no way to derive it
+    from a plain JPEG on its own). None propagates as "unknown", never 0 or
+    a guessed value."""
+    if ground_sampling_distance_cm is None or ground_sampling_distance_cm <= 0:
+        return None
+    return (ground_sampling_distance_cm / 100.0) ** 2
 
 
 def _worse(a: str, b: str) -> str:
@@ -75,9 +88,16 @@ def compute_exg_mask(rgb: np.ndarray, threshold: int = DEFAULT_EXG_THRESHOLD) ->
     return mask
 
 
-def find_canopy_regions(mask: np.ndarray, min_area: int = DEFAULT_MIN_REGION_AREA) -> List[CanopyRegion]:
+def find_canopy_regions(
+    mask: np.ndarray,
+    min_area: int = DEFAULT_MIN_REGION_AREA,
+    pixel_area_m2: Optional[float] = None,
+) -> List[CanopyRegion]:
     """Labels connected components in a vegetation mask and returns per-region
-    stats for everything at or above min_area (filters out noise specks)."""
+    stats for everything at or above min_area (filters out noise specks).
+    area_m2 on each region stays None unless pixel_area_m2 is given (see
+    _pixel_area_m2) - there is no way to derive real-world area from pixels
+    alone without a known ground-sample-distance."""
     labeled = label(mask > 0)
     regions: List[CanopyRegion] = []
 
@@ -94,6 +114,7 @@ def find_canopy_regions(mask: np.ndarray, min_area: int = DEFAULT_MIN_REGION_ARE
             area_px=int(props.area),
             coverage_pct=coverage_pct,
             centroid={"row": props.centroid[0], "col": props.centroid[1]},
+            area_m2=(props.area * pixel_area_m2) if pixel_area_m2 is not None else None,
         ))
 
     return regions
@@ -103,12 +124,23 @@ def assess_canopy_vigor(
     rgb: np.ndarray,
     exg_threshold: int = DEFAULT_EXG_THRESHOLD,
     min_region_area: int = DEFAULT_MIN_REGION_AREA,
+    ground_sampling_distance_cm: Optional[float] = None,
 ) -> CanopyVigorAssessment:
     """Never raises - a completely bare or completely green frame both produce
-    a valid (if unremarkable) assessment rather than an error."""
+    a valid (if unremarkable) assessment rather than an error.
+
+    ground_sampling_distance_cm (cm covered by one pixel) is optional and
+    almost never known for a plain uploaded JPEG - when the caller supplies
+    it (e.g. from a known flight altitude + camera field of view),
+    total_canopy_area_m2 and each low_vigor_regions entry's area_m2 are
+    filled in; otherwise they stay None rather than a fabricated guess."""
+    pixel_area_m2 = _pixel_area_m2(ground_sampling_distance_cm)
+
     mask = compute_exg_mask(rgb, threshold=exg_threshold)
     total_pixels = mask.shape[0] * mask.shape[1]
-    coverage_pct = float(np.count_nonzero(mask)) / total_pixels * 100.0 if total_pixels > 0 else 0.0
+    veg_pixels = int(np.count_nonzero(mask))
+    coverage_pct = float(veg_pixels) / total_pixels * 100.0 if total_pixels > 0 else 0.0
+    total_canopy_area_m2 = veg_pixels * pixel_area_m2 if pixel_area_m2 is not None else None
 
     level = VIGOR_GOOD
     indicators: List[str] = []
@@ -120,7 +152,7 @@ def assess_canopy_vigor(
         level = _worse(level, VIGOR_MODERATE)
         indicators.append(f"Below-average canopy coverage ({coverage_pct:.1f}%)")
 
-    regions = find_canopy_regions(mask, min_area=min_region_area)
+    regions = find_canopy_regions(mask, min_area=min_region_area, pixel_area_m2=pixel_area_m2)
     low_vigor_regions: List[dict] = []
 
     if len(regions) >= 4:
@@ -132,6 +164,7 @@ def assess_canopy_vigor(
             low_vigor_regions.append({
                 "bbox": r.bbox,
                 "area_px": r.area_px,
+                "area_m2": r.area_m2,
                 "coverage_pct": r.coverage_pct,
                 "centroid": r.centroid,
             })
@@ -145,4 +178,5 @@ def assess_canopy_vigor(
         vigor_level=level,
         vigor_indicators=indicators,
         low_vigor_regions=low_vigor_regions,
+        total_canopy_area_m2=total_canopy_area_m2,
     )

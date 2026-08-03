@@ -136,6 +136,14 @@ class DroneImage(Base):
     # (app/api/drones.py). selectin batches the load across a whole image
     # list instead of one query per image.
     diagnosis = relationship("Diagnosis", lazy="selectin", viewonly=True)
+    # Read-only link to the real-math NDVI/stress/vigor analysis row for this
+    # photo (app.services.plant_stress_assessment /
+    # app.services.canopy_vigor_assessment). selectin batches the load
+    # across a whole image list, same as diagnosis above - do not rely on
+    # this immediately after creating a DroneImage in the same request (see
+    # app/api/drones.py's upload_manual_flight_image, which re-queries
+    # DroneImageAnalysis directly instead for that reason).
+    analysis = relationship("DroneImageAnalysis", lazy="selectin", viewonly=True, uselist=False)
 
     captured_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -168,5 +176,15 @@ class DroneImageAnalysis(Base):
     vigor_level = Column(String(20), nullable=True)
     vigor_indicators = Column(JSON, nullable=True)
     low_vigor_regions = Column(JSON, nullable=True)
+    # Real m^2, only populated when the caller supplied a ground-sample-
+    # distance at upload time (DroneImage.ground_sampling_distance_cm) -
+    # None otherwise, never a fabricated estimate. See
+    # app.services.canopy_vigor_assessment._pixel_area_m2.
+    total_canopy_area_m2 = Column(Float, nullable=True)
+    # Uploaded annotated copy of the photo - canopy boundary traced, low-vigor
+    # areas boxed in red, coverage/vigor/area labelled
+    # (app.services.canopy_overlay_rendering). Nullable: stays None if the
+    # render or its upload failed, which never blocks image ingestion.
+    overlay_url = Column(String(500), nullable=True)
 
     analyzed_at = Column(DateTime(timezone=True), server_default=func.now())

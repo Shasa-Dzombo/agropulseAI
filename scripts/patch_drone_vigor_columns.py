@@ -21,6 +21,8 @@ STATEMENTS = [
     "ALTER TABLE drone_image_analyses ADD COLUMN IF NOT EXISTS vigor_level VARCHAR(20)",
     "ALTER TABLE drone_image_analyses ADD COLUMN IF NOT EXISTS vigor_indicators JSON",
     "ALTER TABLE drone_image_analyses ADD COLUMN IF NOT EXISTS low_vigor_regions JSON",
+    "ALTER TABLE drone_image_analyses ADD COLUMN IF NOT EXISTS total_canopy_area_m2 FLOAT",
+    "ALTER TABLE drone_image_analyses ADD COLUMN IF NOT EXISTS overlay_url VARCHAR(500)",
 ]
 
 

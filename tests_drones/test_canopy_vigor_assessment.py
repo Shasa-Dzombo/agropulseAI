@@ -4,6 +4,7 @@ directly against synthetic RGB arrays - no DB, no real imagery.
 """
 
 import numpy as np
+import pytest
 
 from app.services.canopy_vigor_assessment import (
     VIGOR_GOOD,
@@ -91,3 +92,26 @@ def test_find_canopy_regions_filters_out_small_noise_specks():
     regions = find_canopy_regions(mask, min_area=2000)
 
     assert regions == []
+
+
+def test_area_m2_is_none_without_a_ground_sampling_distance():
+    frame = _frame_with_green_square(square_frac=0.5, size=(200, 200))
+
+    result = assess_canopy_vigor(frame)
+
+    assert result.total_canopy_area_m2 is None
+    mask = compute_exg_mask(frame)
+    assert find_canopy_regions(mask, min_area=100)[0].area_m2 is None
+
+
+def test_area_m2_is_computed_from_a_supplied_ground_sampling_distance():
+    frame = _frame_with_green_square(square_frac=0.5, size=(200, 200))
+    mask = compute_exg_mask(frame)
+    veg_pixels = int(np.count_nonzero(mask))
+
+    # 10 cm/px -> 0.1 m/px -> 0.01 m^2 per pixel.
+    result = assess_canopy_vigor(frame, ground_sampling_distance_cm=10.0)
+
+    assert result.total_canopy_area_m2 == pytest.approx(veg_pixels * 0.01, rel=1e-6)
+    regions = find_canopy_regions(mask, min_area=100, pixel_area_m2=0.01)
+    assert regions[0].area_m2 == pytest.approx(regions[0].area_px * 0.01, rel=1e-6)

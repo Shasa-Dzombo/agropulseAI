@@ -43,7 +43,9 @@ from app.models.drone import (
 from app.models.user import Farm
 from app.services.ai_service import aws_ai_service
 from app.services._kindwise_client_loader import CropType, KindwiseAPIClient
+from app.services.canopy_overlay_rendering import render_vigor_overlay
 from app.services.canopy_vigor_assessment import assess_canopy_vigor
+from app.services.dji_gsd_estimation import estimate_ground_sampling_distance_cm
 from app.services.exif_gps import extract_gps_from_image_bytes
 from app.services.kindwise_crop_mapping import map_farm_crop_type_to_kindwise
 from app.services.kindwise_disease_service import get_kindwise_client, run_disease_detection
@@ -125,6 +127,33 @@ class DroneAIService:
             logger.exception("Weather context lookup failed for flight %s - proceeding without it", flight.id)
             await self.db.rollback()
 
+    async def _render_and_upload_overlay(
+        self, rgb: np.ndarray, vigor, flight_id: int, waypoint_index: int,
+        ground_sampling_distance_cm: Optional[float],
+    ) -> Optional[str]:
+        """Annotated copy of the photo (canopy boundary + low-vigor boxes +
+        labels), uploaded alongside the raw bands. Returns None and logs on
+        any failure - a rendering or upload problem must never cost the
+        caller their actual image ingest, so this is deliberately
+        best-effort, matching _apply_weather_context's contract."""
+        try:
+            overlay = render_vigor_overlay(
+                rgb, vigor, ground_sampling_distance_cm=ground_sampling_distance_cm
+            )
+            ok, buf = cv2.imencode(".jpg", overlay)
+            if not ok:
+                logger.warning("Could not JPEG-encode the vigor overlay for flight %s image %s", flight_id, waypoint_index)
+                return None
+            return await self._upload(
+                buf.tobytes(), f"{waypoint_index}_overlay.jpg", f"drone-imagery/{flight_id}"
+            )
+        except Exception:
+            logger.exception(
+                "Vigor overlay render/upload failed for flight %s image %s - continuing without it",
+                flight_id, waypoint_index,
+            )
+            return None
+
     async def _process_and_persist_image(
         self, image: MultispectralImage, processor: MultispectralProcessor,
         flight_id: int, waypoint_index: int, tree_id: Optional[str],
@@ -156,7 +185,10 @@ class DroneAIService:
         indices = processor.process_multispectral_image(image)
         ndvi = _safe_float(indices.ndvi)
         stress = assess_plant_stress(indices)
-        vigor = assess_canopy_vigor(image.rgb)
+        vigor = assess_canopy_vigor(image.rgb, ground_sampling_distance_cm=ground_sampling_distance_cm)
+        overlay_url = await self._render_and_upload_overlay(
+            image.rgb, vigor, flight_id, waypoint_index, ground_sampling_distance_cm,
+        )
         self.db.add(DroneImageAnalysis(
             image_id=drone_image.id,
             ndvi=ndvi,
@@ -171,6 +203,8 @@ class DroneAIService:
             vigor_level=vigor.vigor_level,
             vigor_indicators=vigor.vigor_indicators,
             low_vigor_regions=vigor.low_vigor_regions,
+            total_canopy_area_m2=vigor.total_canopy_area_m2,
+            overlay_url=overlay_url,
         ))
 
         if run_disease_detection_for_mission:
@@ -220,6 +254,7 @@ class DroneAIService:
         self, flight_id: int, user_id: int,
         rgb_bytes: bytes, nir_bytes: Optional[bytes], red_edge_bytes: Optional[bytes],
         tree_id: Optional[str] = None,
+        ground_sampling_distance_cm: Optional[float] = None,
     ) -> DroneImage:
         """v1 uses DJI's companion consumer RGB JPG directly as rgb (no
         Blue/Green/Red band-stacking - that needs Addendum 3's real
@@ -227,7 +262,14 @@ class DroneAIService:
         directly when supplied - real signal, not yet radiometrically
         calibrated. Falls back to green_channel_as_nir_placeholder when no
         real NIR file is given, same honest degraded path LocalFileCameraBackend
-        already uses."""
+        already uses.
+
+        ground_sampling_distance_cm (cm covered by one pixel) is optional and
+        has no way to be derived from a plain JPEG - when supplied (e.g. from
+        a known flight altitude + camera field of view), it's stored on the
+        image and used to convert canopy-vigor region pixel areas into real
+        m^2 (app.services.canopy_vigor_assessment); otherwise those stay
+        unknown rather than a fabricated guess."""
         flight = await self._get_owned_flight_or_raise(flight_id, user_id)
         if flight.backend_type != DroneBackendType.MANUAL_INGEST:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This flight is not a manual-ingest flight")
@@ -253,6 +295,12 @@ class DroneAIService:
             red_edge = cv2.imdecode(np.frombuffer(red_edge_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
             if red_edge is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not decode red_edge image")
+
+        # An explicitly-supplied value always wins; otherwise try to read it
+        # out of the photo's own EXIF/XMP. Stays None when neither is
+        # available, which just means areas are reported in pixels.
+        if ground_sampling_distance_cm is None:
+            ground_sampling_distance_cm = estimate_ground_sampling_distance_cm(rgb_bytes)
 
         gps = extract_gps_from_image_bytes(rgb_bytes)
         latitude = gps.latitude if gps else flight.home_latitude
@@ -295,7 +343,7 @@ class DroneAIService:
         processor = MultispectralProcessor()
         drone_image = await self._process_and_persist_image(
             image, processor, flight_id, waypoint_index, tree_id,
-            latitude, longitude, altitude, None, rgb_url, nir_url,
+            latitude, longitude, altitude, ground_sampling_distance_cm, rgb_url, nir_url,
         )
         await self.db.commit()
         await self.db.refresh(drone_image)

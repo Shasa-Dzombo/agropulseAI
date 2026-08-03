@@ -102,25 +102,6 @@ class DiseaseAnswer(BaseModel):
     top_treatment_actions: List[str] = []
 
 
-class DroneImageResponse(BaseModel):
-    id: int
-    flight_id: int
-    waypoint_index: int
-    tree_id: Optional[str] = None
-    rgb_url: Optional[str] = None
-    nir_url: Optional[str] = None
-    latitude: float
-    longitude: float
-    altitude: float
-    ground_sampling_distance_cm: Optional[float] = None
-    diagnosis_id: Optional[int] = None
-    diagnosis: Optional[DiseaseAnswer] = None
-    captured_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
 class DroneImageAnalysisResponse(BaseModel):
     image_id: int
     ndvi: Optional[float] = None
@@ -138,6 +119,35 @@ class DroneImageAnalysisResponse(BaseModel):
     vigor_level: Optional[str] = None
     vigor_indicators: List[str] = []
     low_vigor_regions: List[Dict[str, Any]] = []
+    # Real m^2 - only non-null when the photo was uploaded with a known
+    # ground_sampling_distance_cm; never a fabricated estimate.
+    total_canopy_area_m2: Optional[float] = None
+    # Annotated copy of the photo: canopy boundary traced, low-vigor areas
+    # boxed in red, coverage/vigor/area labelled.
+    overlay_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DroneImageResponse(BaseModel):
+    id: int
+    flight_id: int
+    waypoint_index: int
+    tree_id: Optional[str] = None
+    rgb_url: Optional[str] = None
+    nir_url: Optional[str] = None
+    latitude: float
+    longitude: float
+    altitude: float
+    ground_sampling_distance_cm: Optional[float] = None
+    diagnosis_id: Optional[int] = None
+    diagnosis: Optional[DiseaseAnswer] = None
+    # NDVI/stress/canopy-vigor analysis for this specific photo (always
+    # computed - see DroneImageAnalysisResponse). None only in the unlikely
+    # case analysis hasn't been persisted yet for this image.
+    analysis: Optional[DroneImageAnalysisResponse] = None
+    captured_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

@@ -1,0 +1,28 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+# This repo isn't pip-installed (no setup.py / no `pip install -e .`), so
+# `import app` only resolves when the project root is on sys.path. Without
+# this, `python -m pytest` from the root happened to work (it puts cwd on
+# the path) while a bare `pytest` - or running a test file from inside
+# tests_drones/ - failed with ModuleNotFoundError: No module named 'app'.
+# Relative to rootdir, i.e. this file's directory.
+pythonpath = ["."]
+
+# Only tests_drones/ is collectable. The repo's other test directory,
+# tests/, imports modules that don't exist anywhere in the codebase
+# (app.database.base, app.api.main, app.core.config, app.core.security) and
+# fails at collection - see tests_drones/conftest.py's docstring. Without
+# this, a bare `pytest` from the root would try to collect it and error out.
+testpaths = ["tests_drones"]
+
+filterwarnings = [
+    # Third-party, not ours to fix: `from fastapi import FastAPI` pulls in
+    # Starlette, which still imports websockets.legacy - a module the
+    # websockets package deprecated in 14.0. Nothing under app/ imports
+    # websockets at all, so this can only be resolved by a dependency
+    # upgrade, not a code change. Scoped to this exact message so real
+    # DeprecationWarnings from our own code still surface.
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+]

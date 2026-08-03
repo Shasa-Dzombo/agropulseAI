@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from app.database import get_db
 from app.models.diagnosis import Diagnosis, DiseaseCategory
+from app.models.drone import DroneImageAnalysis
 from app.models.user import Farm, User
 from app.schemas.drone import (
     DroneFlightResponse, DroneImageResponse,
@@ -139,6 +140,7 @@ async def upload_manual_flight_image(
     nir: Optional[UploadFile] = File(None),
     red_edge: Optional[UploadFile] = File(None),
     tree_id: Optional[str] = Form(None),
+    ground_sampling_distance_cm: Optional[float] = Form(None),
     current_user: User = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
 ):
@@ -148,6 +150,14 @@ async def upload_manual_flight_image(
     nir/red_edge are optional real band files; if nir is omitted, NDVI falls
     back to the same green-channel placeholder LocalFileCameraBackend uses
     when no real NIR file exists (not real near-infrared data).
+
+    ground_sampling_distance_cm (cm of ground covered by one pixel) is
+    optional and usually unnecessary: when omitted it's derived from the
+    photo's own EXIF/XMP metadata where the aircraft records enough to do so
+    (app.services.dji_gsd_estimation). Supply it explicitly to override that,
+    or when your files lack the required tags. When neither is available,
+    analysis.total_canopy_area_m2 stays null and areas remain pixel counts
+    rather than a fabricated estimate.
     """
     service = _build_service(db)
     rgb_bytes = await rgb.read()
@@ -155,8 +165,20 @@ async def upload_manual_flight_image(
     red_edge_bytes = await red_edge.read() if red_edge is not None else None
 
     image = await service.ingest_captured_image(
-        flight_id, current_user.id, rgb_bytes, nir_bytes, red_edge_bytes, tree_id=tree_id,
+        flight_id, current_user.id, rgb_bytes, nir_bytes, red_edge_bytes,
+        tree_id=tree_id, ground_sampling_distance_cm=ground_sampling_distance_cm,
     )
+
+    # Queried directly by image_id rather than via image.analysis: image was
+    # just built in this same request (ingest_captured_image's db.refresh()
+    # only refreshes its own columns), so the selectin relationship hasn't
+    # been populated - a fresh query is simpler and safer than forcing a
+    # relationship (re)load on a freshly-committed async object.
+    analysis_result = await db.execute(
+        select(DroneImageAnalysis).where(DroneImageAnalysis.image_id == image.id)
+    )
+    analysis_row = analysis_result.scalar_one_or_none()
+
     return DroneImageResponse(
         id=image.id,
         flight_id=image.flight_id,
@@ -170,6 +192,7 @@ async def upload_manual_flight_image(
         ground_sampling_distance_cm=image.ground_sampling_distance_cm,
         diagnosis_id=image.diagnosis_id,
         diagnosis=None,
+        analysis=DroneImageAnalysisResponse.model_validate(analysis_row) if analysis_row else None,
         captured_at=image.captured_at,
     )
 
@@ -242,6 +265,7 @@ async def list_flight_images(
             ground_sampling_distance_cm=image.ground_sampling_distance_cm,
             diagnosis_id=image.diagnosis_id,
             diagnosis=_build_disease_answer(image.diagnosis),
+            analysis=DroneImageAnalysisResponse.model_validate(image.analysis) if image.analysis else None,
             captured_at=image.captured_at,
         )
         for image in images

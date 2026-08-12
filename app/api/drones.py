@@ -141,6 +141,7 @@ async def upload_manual_flight_image(
     red_edge: Optional[UploadFile] = File(None),
     tree_id: Optional[str] = Form(None),
     ground_sampling_distance_cm: Optional[float] = Form(None),
+    exclude_shaded_canopy: bool = Form(False),
     current_user: User = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
 ):
@@ -158,6 +159,13 @@ async def upload_manual_flight_image(
     or when your files lack the required tags. When neither is available,
     analysis.total_canopy_area_m2 stays null and areas remain pixel counts
     rather than a fabricated estimate.
+
+    exclude_shaded_canopy (default false) drops densely-shaded tree/hedge
+    canopy before measuring, so coverage reflects open crop instead of every
+    green thing in frame. Useful when a treeline or hedgerow is visible.
+    It is a lighting-based heuristic, not a crop classifier - see
+    app.services.crop_vegetation_filter for exactly what it can and cannot
+    separate before relying on the difference it makes.
     """
     service = _build_service(db)
     rgb_bytes = await rgb.read()
@@ -167,6 +175,7 @@ async def upload_manual_flight_image(
     image = await service.ingest_captured_image(
         flight_id, current_user.id, rgb_bytes, nir_bytes, red_edge_bytes,
         tree_id=tree_id, ground_sampling_distance_cm=ground_sampling_distance_cm,
+        exclude_shaded_canopy=exclude_shaded_canopy,
     )
 
     # Queried directly by image_id rather than via image.analysis: image was

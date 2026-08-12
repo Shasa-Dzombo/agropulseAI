@@ -26,6 +26,8 @@ import cv2
 import numpy as np
 from skimage.measure import label, regionprops
 
+from app.services.crop_vegetation_filter import separate_crop_from_shaded_canopy
+
 VIGOR_GOOD = "good"
 VIGOR_MODERATE = "moderate"
 VIGOR_LOW = "low"
@@ -125,6 +127,7 @@ def assess_canopy_vigor(
     exg_threshold: int = DEFAULT_EXG_THRESHOLD,
     min_region_area: int = DEFAULT_MIN_REGION_AREA,
     ground_sampling_distance_cm: Optional[float] = None,
+    exclude_shaded_canopy: bool = False,
 ) -> CanopyVigorAssessment:
     """Never raises - a completely bare or completely green frame both produce
     a valid (if unremarkable) assessment rather than an error.
@@ -133,17 +136,30 @@ def assess_canopy_vigor(
     almost never known for a plain uploaded JPEG - when the caller supplies
     it (e.g. from a known flight altitude + camera field of view),
     total_canopy_area_m2 and each low_vigor_regions entry's area_m2 are
-    filled in; otherwise they stay None rather than a fabricated guess."""
+    filled in; otherwise they stay None rather than a fabricated guess.
+
+    exclude_shaded_canopy drops densely-shaded vegetation (tree/hedge canopy)
+    before measuring, so coverage reflects open crop rather than every green
+    thing in frame - see app.services.crop_vegetation_filter for what that
+    can and can't actually distinguish. Off by default: it is illumination-
+    dependent, and turning it on silently would change what an existing
+    coverage figure means."""
     pixel_area_m2 = _pixel_area_m2(ground_sampling_distance_cm)
 
     mask = compute_exg_mask(rgb, threshold=exg_threshold)
+    extra_indicators: List[str] = []
+    if exclude_shaded_canopy:
+        separation = separate_crop_from_shaded_canopy(rgb, mask)
+        mask = separation.crop_mask
+        extra_indicators.extend(separation.notes)
+
     total_pixels = mask.shape[0] * mask.shape[1]
     veg_pixels = int(np.count_nonzero(mask))
     coverage_pct = float(veg_pixels) / total_pixels * 100.0 if total_pixels > 0 else 0.0
     total_canopy_area_m2 = veg_pixels * pixel_area_m2 if pixel_area_m2 is not None else None
 
     level = VIGOR_GOOD
-    indicators: List[str] = []
+    indicators: List[str] = list(extra_indicators)
 
     if coverage_pct < 15.0:
         level = _worse(level, VIGOR_LOW)

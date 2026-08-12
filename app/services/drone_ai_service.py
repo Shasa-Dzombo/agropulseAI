@@ -164,6 +164,7 @@ class DroneAIService:
         run_disease_detection_for_mission: bool = False,
         kindwise_client: Optional[KindwiseAPIClient] = None,
         kindwise_crop_type: Optional[CropType] = None,
+        exclude_shaded_canopy: bool = False,
     ) -> DroneImage:
         """Called from the manual DJI-ingestion upload path
         (ingest_captured_image below) - the one real NDVI/stress/vigor/
@@ -185,7 +186,11 @@ class DroneAIService:
         indices = processor.process_multispectral_image(image)
         ndvi = _safe_float(indices.ndvi)
         stress = assess_plant_stress(indices)
-        vigor = assess_canopy_vigor(image.rgb, ground_sampling_distance_cm=ground_sampling_distance_cm)
+        vigor = assess_canopy_vigor(
+            image.rgb,
+            ground_sampling_distance_cm=ground_sampling_distance_cm,
+            exclude_shaded_canopy=exclude_shaded_canopy,
+        )
         overlay_url = await self._render_and_upload_overlay(
             image.rgb, vigor, flight_id, waypoint_index, ground_sampling_distance_cm,
         )
@@ -255,6 +260,7 @@ class DroneAIService:
         rgb_bytes: bytes, nir_bytes: Optional[bytes], red_edge_bytes: Optional[bytes],
         tree_id: Optional[str] = None,
         ground_sampling_distance_cm: Optional[float] = None,
+        exclude_shaded_canopy: bool = False,
     ) -> DroneImage:
         """v1 uses DJI's companion consumer RGB JPG directly as rgb (no
         Blue/Green/Red band-stacking - that needs Addendum 3's real
@@ -344,6 +350,7 @@ class DroneAIService:
         drone_image = await self._process_and_persist_image(
             image, processor, flight_id, waypoint_index, tree_id,
             latitude, longitude, altitude, ground_sampling_distance_cm, rgb_url, nir_url,
+            exclude_shaded_canopy=exclude_shaded_canopy,
         )
         await self.db.commit()
         await self.db.refresh(drone_image)

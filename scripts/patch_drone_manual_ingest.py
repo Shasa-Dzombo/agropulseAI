@@ -24,7 +24,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import text
 from app.db_config import production_engine
 
-ADD_ENUM_VALUE = "ALTER TYPE dronebackendtype ADD VALUE IF NOT EXISTS 'manual_ingest'"
+# The label must be the enum MEMBER NAME ('MANUAL_INGEST'), not its value
+# ('manual_ingest'). SQLAlchemy's Enum(DroneBackendType) persists .name, and
+# create_all() built this type from the names too - hence the existing
+# 'SIMULATED'/'MAVLINK' labels. An earlier version of this script added the
+# lowercase value instead, so every manual-flight insert failed with
+# "invalid input value for enum dronebackendtype: 'MANUAL_INGEST'".
+# Postgres has no DROP VALUE, so the stray lowercase 'manual_ingest' label
+# stays in the type; it's unreachable from the ORM and harmless.
+ADD_ENUM_VALUE = "ALTER TYPE dronebackendtype ADD VALUE IF NOT EXISTS 'MANUAL_INGEST'"
 
 STATEMENTS = [
     "ALTER TABLE drone_flights ALTER COLUMN target_altitude_m DROP NOT NULL",

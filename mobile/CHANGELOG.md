@@ -30,4 +30,15 @@ Running log of milestones for the Flutter app (`mobile/`). Kept lean on purpose 
 
 **Next up:** farm list / dashboard screen — blocked on a real backend fix first (see below), then the camera-upload → diagnosis flow.
 
-**Investigated but not fixed:** tried mounting `app/api/farms.py` (a complete, unmounted router - `main.py`'s router list simply never included it) to build the farm-list screen next. It's not a clean win: `GET /farms` 500s on any existing data because `PaginatedFarmsResponse` doesn't match the `Farm` model (`uuid` typed as `str` but the model returns a `UUID` object; `primary_crop` and `verification_status` are required in the schema but don't exist on the model), and `POST /farms` requires `latitude`/`longitude`/`county` that `app/schemas/user.py`'s `FarmBase` marks optional elsewhere - another instance of the schema drift already seen in auth. Reverted the mount rather than ship a 500. Fixing the schema/model mismatch is the next real backend task before the farm-list screen can be built.
+**`app/api/farms.py` mounted, partially fixed:** it existed but was never in `main.py`'s router list. Fixed and verified:
+
+- `FarmListResponse.uuid` was typed `str` but the `Farm` model returns a `uuid.UUID` object (Pydantic v2 doesn't auto-coerce that) - retyped to `UUID`.
+- `primary_crop` and `verification_status` are required in the response schema but don't exist as columns on the `Farm` model at all (`AttributeError` on access, not just `None`) - made `Optional[...] = None` as a stopgap. Real fix is either adding those columns (migration) or dropping the fields from the API contract.
+- **Verified:** `GET /farms` now returns real paginated data correctly (240 seeded farms) with no errors.
+
+**Known broken, not fixed (documented instead of chased further at 1am):**
+- `POST /farms` (create) passes `user_id=` to the `Farm()` constructor, but the actual column is `owner_id` - and also passes `farm_type`, `primary_crop`, `has_irrigation`, and `verification_status`, none of which exist on the model. Fails cleanly (500, no partial write) rather than corrupting anything, but create is unusable until this is fixed.
+- `GET /farms/{farm_id}` (`FarmDetailResponse`) has the same `uuid: str` issue (not yet fixed there) plus deeper drift not fully mapped: `user_id` vs the model's `owner_id`, `global_gap_certified` vs the model's `gap_certified`, and several fields (`farm_type`, `cultivated_area_acres`, `has_irrigation`) that may not exist on the model at all. Needs a careful field-by-field pass against `app/models/database.py`'s `Farm` class before it's safe to call.
+- `FieldResponse.uuid` (used by `/farms/{farm_id}/fields`) has the same untyped-`str` issue, unfixed. That whole sub-resource is moot anyway - `app/services/notification_service.py` imports `app.models.field.Field`, which doesn't exist as a module.
+
+**Next up:** farm-list screen in the mobile app (backend now supports it via `GET /farms`). Farm creation and detail view need the fixes above first.

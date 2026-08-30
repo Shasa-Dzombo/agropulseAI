@@ -24,6 +24,7 @@ Author: AgroPulse Engineering Team
 
 from datetime import datetime
 from typing import Optional, List
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
@@ -78,15 +79,19 @@ class FarmUpdateRequest(BaseModel):
 class FarmListResponse(BaseModel):
     """Farm list response."""
     id: int
-    uuid: str
+    uuid: UUID
     name: str
     county: str
     size_acres: float
-    primary_crop: Optional[str]
+    # Neither primary_crop nor verification_status exist on the Farm model
+    # (see app/models/database.py) - defaulted to None rather than added as
+    # real columns, which would need a migration. Revisit if the mobile app
+    # ends up needing real values here.
+    primary_crop: Optional[str] = None
     latitude: float
     longitude: float
     is_active: bool
-    verification_status: str
+    verification_status: Optional[str] = None
     created_at: datetime
     
     class Config:

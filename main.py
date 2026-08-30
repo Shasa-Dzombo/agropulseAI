@@ -14,17 +14,9 @@ logger = logging.getLogger(__name__)
 # still missing dependencies) doesn't prevent the rest of the app - including
 # routers unrelated to it - from starting. Failures are logged, not silenced.
 _ROUTER_MODULES = [
-    "auth", "sensors", "payments", "diagnoses", "optimization", "cctv",
+    "auth", "farms", "sensors", "payments", "diagnoses", "optimization", "cctv",
     "advanced", "drones",
 ]
-# "farms" deliberately excluded - see mobile/CHANGELOG.md 2026-08-31 entry.
-# The router itself is complete (app/api/farms.py) but GET /farms 500s on
-# any existing data (PaginatedFarmsResponse doesn't match the Farm model:
-# uuid is typed str but the model returns a UUID object, and primary_crop/
-# verification_status are required in the schema but don't exist on the
-# model) and POST /farms requires latitude/longitude/county that the
-# schemas/user.py FarmBase used elsewhere marks optional - a real,
-# separate fix, not attempted here for lack of time.
 routers = {}
 for _module_name in _ROUTER_MODULES:
     try:
@@ -148,6 +140,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Include routers (only those that imported successfully - see loader above)
 if "auth" in routers:
     app.include_router(routers["auth"].router, prefix="/api/v1")
+if "farms" in routers:
+    app.include_router(routers["farms"].router, prefix="/api/v1")
 if "sensors" in routers:
     app.include_router(routers["sensors"].router, prefix="/api/v1")
 if "payments" in routers:

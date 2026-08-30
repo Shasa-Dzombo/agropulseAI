@@ -28,4 +28,6 @@ Running log of milestones for the Flutter app (`mobile/`). Kept lean on purpose 
 
   Verified via live `curl` round trip: register → tokens issued, `/me` returns the user, login with the same credentials succeeds, refresh issues new tokens, logout succeeds. All match the mobile client's expected JSON shapes exactly.
 
-**Next up:** farm list / dashboard screen, then the camera-upload → diagnosis flow.
+**Next up:** farm list / dashboard screen — blocked on a real backend fix first (see below), then the camera-upload → diagnosis flow.
+
+**Investigated but not fixed:** tried mounting `app/api/farms.py` (a complete, unmounted router - `main.py`'s router list simply never included it) to build the farm-list screen next. It's not a clean win: `GET /farms` 500s on any existing data because `PaginatedFarmsResponse` doesn't match the `Farm` model (`uuid` typed as `str` but the model returns a `UUID` object; `primary_crop` and `verification_status` are required in the schema but don't exist on the model), and `POST /farms` requires `latitude`/`longitude`/`county` that `app/schemas/user.py`'s `FarmBase` marks optional elsewhere - another instance of the schema drift already seen in auth. Reverted the mount rather than ship a 500. Fixing the schema/model mismatch is the next real backend task before the farm-list screen can be built.

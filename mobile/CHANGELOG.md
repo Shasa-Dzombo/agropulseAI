@@ -10,4 +10,22 @@ Running log of milestones for the Flutter app (`mobile/`). Kept lean on purpose 
 - Verified the full Android toolchain end-to-end: `flutter build apk --debug` succeeds (`flutter doctor` all green except the irrelevant Visual Studio/Windows-desktop check).
 - Framework choice: Flutter over React Native — see the project decision context for the reasoning (camera/sensor-heavy app, team not JS-heavy).
 
-**Next up:** API client + login/register screens against the backend's `/api/v1/auth` endpoints.
+## 2026-08-31 — Auth flow wired to the backend
+
+- **Fixed a real bug on the way in:** the repo root's `.gitignore` had a bare `lib/` rule (standard Python boilerplate for build artifacts) that was silently matching `mobile/lib/` too — the entire Flutter source tree was never actually committed by the previous scaffold commit. Added `!mobile/lib/` to un-ignore it. Worth knowing if any other `mobile/` subfolder ever mysteriously doesn't show up in `git status`.
+- Added `ApiClient` (`lib/core/api_client.dart`) — thin JSON REST client against the FastAPI backend, with bearer-token attachment and a single automatic refresh-and-retry on a 401.
+- Added `TokenStorage` — tokens go in the platform keystore (`flutter_secure_storage`), not plaintext prefs.
+- Built the auth flow end to end against `app/api/auth.py`'s actual live schema (not the stale `QUICKSTART.md` example, which documents a different/older request shape): register, login, refresh (note: refresh token goes as a query param, not JSON body — that's how the backend endpoint is written), `/me`, logout.
+- Login screen, register screen, and a placeholder home screen showing the logged-in user.
+- Session persistence: app checks for a stored token on launch and skips straight to home if present.
+- Tests added where there's real logic to protect: auth model JSON parsing (guards against silent drift from the backend schema) and a login-screen smoke test (fields render, empty-submit validation fires). No tests for the plain scaffolding.
+- Full Android debug APK rebuild with the new native plugin (`flutter_secure_storage`) compiled in succeeds.
+- **Live end-to-end verification against the backend surfaced three real, pre-existing backend bugs that made the entire `/auth` flow non-functional for any client, not just this app.** Fixed in `app/api/auth.py` and `app/db_config.py` (separate commit, since these aren't mobile-specific):
+  1. `except jwt.JWTError` — that class doesn't exist in PyJWT (it's python-jose's name); every token decode crashed `/auth/me` with a 500. Fixed to `jwt.InvalidTokenError`.
+  2. JWT `sub` claim was a raw int (`user.id`); PyJWT enforces `sub` must be a string per the JWT spec and rejected it (`InvalidSubjectError`) on *every* decode. Fixed to stringify on encode, `int()` on read.
+  3. `get_production_db_dependency` never called `session.commit()` (only rollback-on-error) — every write through it, including new user registration, was silently discarded when the session closed. Registered users vanished instantly; login/me/refresh could never find them. Now commits on the success path.
+  4. Bonus: `User.is_active` is a computed property gated on `status == ACTIVE`, which defaults to `PENDING_VERIFICATION` — and `/auth/verify-email` / `/auth/verify-phone` are non-functional (pre-existing, noted in the code), so no account could ever become active. Registration now sets `status=ACTIVE` directly as a stopgap; revisit once real verification exists.
+
+  Verified via live `curl` round trip: register → tokens issued, `/me` returns the user, login with the same credentials succeeds, refresh issues new tokens, logout succeeds. All match the mobile client's expected JSON shapes exactly.
+
+**Next up:** farm list / dashboard screen, then the camera-upload → diagnosis flow.

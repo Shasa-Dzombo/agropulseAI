@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # gracefully, same pattern as KINDWISE_API_KEY above.
     OPENWEATHER_API_KEY: Optional[str] = None
 
+    # Anthropic Claude API (direct, not via AWS Bedrock) - powers AI treatment
+    # recommendations, greenhouse disease diagnosis vision fallback, and the
+    # farmer chatbot. Unset = those features return a clear "not configured"
+    # error instead of failing silently.
+    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_MODEL: str = "claude-opus-5"
+
     class Config:
         env_file = _ENV_FILE
         case_sensitive = True

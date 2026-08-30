@@ -37,6 +37,7 @@ certifi  # SSL certificates
 boto3  # AWS SDK for Bedrock, SageMaker, S3
 azure-ai-vision-imageanalysis  # Azure Computer Vision
 openai  # For GPT-based chatbot
+anthropic  # Direct Claude API - treatment recommendations, vision diagnosis fallback, farmer chatbot
 # tensorflow  # For local AI models (optional)
 
 # Blockchain Integration

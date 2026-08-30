@@ -13,7 +13,9 @@ from app.schemas.diagnosis import (
 )
 from app.auth import get_current_user  # Changed from get_current_farmer
 from app.services.ai_service import aws_ai_service
+from app.services.claude_ai_service import claude_ai_service, ClaudeNotConfiguredError
 from app.services.blockchain import blockchain_service
+from app.config import settings
 
 router = APIRouter(prefix="/diagnoses", tags=["AI Crop Health Diagnosis"])
 
@@ -111,12 +113,24 @@ async def process_diagnosis(diagnosis_id: int, db: AsyncSession):
     await db.commit()
     
     try:
-        # Call AWS AI service
-        ai_result = await aws_ai_service.diagnose_crop_disease(
-            image_urls=diagnosis.image_urls,
-            metadata=diagnosis.diagnosis_metadata
-        )
-        
+        # AWS_SAGEMAKER_ENDPOINT is unset by default (no trained model deployed),
+        # so this falls back to Claude vision via ANTHROPIC_API_KEY, which needs
+        # no AWS infrastructure. Set AWS_SAGEMAKER_ENDPOINT to use a real trained
+        # model instead once one is deployed.
+        if settings.AWS_SAGEMAKER_ENDPOINT:
+            ai_result = await aws_ai_service.diagnose_crop_disease(
+                image_urls=diagnosis.image_urls,
+                metadata=diagnosis.diagnosis_metadata
+            )
+        else:
+            try:
+                ai_result = await claude_ai_service.diagnose_crop_disease(
+                    image_urls=diagnosis.image_urls,
+                    metadata=diagnosis.diagnosis_metadata
+                )
+            except ClaudeNotConfiguredError as e:
+                ai_result = {"success": False, "error": str(e)}
+
         if ai_result.get("success"):
             # Update diagnosis with results
             diagnosis.status = DiagnosisStatus.COMPLETED

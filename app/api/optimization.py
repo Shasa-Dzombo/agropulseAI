@@ -12,6 +12,7 @@ from app.schemas.optimization import (
 )
 from app.auth import get_current_farmer
 from app.services.quantum_service import quantum_service
+from app.services.claude_ai_service import claude_ai_service, ClaudeNotConfiguredError
 from app.config import settings
 
 router = APIRouter(prefix="/optimization", tags=["Quantum Optimization"])
@@ -249,10 +250,20 @@ async def chatbot_query(
         )
     
     else:
-        return ChatbotResponse(
-            response="I'm here to help you manage your farm efficiently. You can ask me about scouting plans, diagnosis permits, or farm alerts.",
-            suggested_actions=[
-                "View alerts",
-                "Get help"
-            ]
-        )
+        # Falls through here for anything that isn't a recognized
+        # plan/diagnosis/help keyword - hand it to Claude instead of the
+        # generic static reply.
+        try:
+            reply = await claude_ai_service.chat(message.message)
+            return ChatbotResponse(
+                response=reply,
+                suggested_actions=["View alerts", "Get help"]
+            )
+        except ClaudeNotConfiguredError:
+            return ChatbotResponse(
+                response="I'm here to help you manage your farm efficiently. You can ask me about scouting plans, diagnosis permits, or farm alerts.",
+                suggested_actions=[
+                    "View alerts",
+                    "Get help"
+                ]
+            )

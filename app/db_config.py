@@ -445,6 +445,13 @@ def get_production_db_dependency() -> Generator[Session, None, None]:
     session = ProductionSessionLocal()
     try:
         yield session
+        # Repository methods (see BaseRepository.create/update) only flush,
+        # they don't commit - without this, every write made through this
+        # dependency was silently discarded on session.close() below and
+        # never actually reached the database (e.g. registered users
+        # vanished immediately - /register would issue valid-looking
+        # tokens for a user that /login and /me could never find).
+        session.commit()
     except Exception as e:
         session.rollback()
         raise

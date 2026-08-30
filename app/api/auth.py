@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.db_config import get_production_db_dependency
 from app.repositories.user import UserRepository
-from app.models.database import UserRole, SubscriptionTier
+from app.models.database import UserRole, SubscriptionTier, AccountStatus
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -186,7 +186,7 @@ def decode_token(token: str) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired"
         )
-    except jwt.JWTError:
+    except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token"
@@ -212,15 +212,18 @@ def get_current_user(
     """
     payload = decode_token(credentials.credentials)
     user_id = payload.get("sub")
-    
+
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token"
         )
-    
+
     user_repo = UserRepository(db)
-    user = user_repo.get_by_id(user_id)
+    # "sub" is stored as a string (JWT spec requires it - PyJWT rejects a
+    # non-string sub with InvalidSubjectError at decode time), but
+    # get_by_id expects the real int PK.
+    user = user_repo.get_by_id(int(user_id))
     
     if not user:
         raise HTTPException(
@@ -304,7 +307,16 @@ def register(
         last_name=last_name,
         county=request.county,
         role=UserRole(request.role),
-        subscription_tier=SubscriptionTier.FREE
+        subscription_tier=SubscriptionTier.FREE,
+        # User.status defaults to PENDING_VERIFICATION (User.is_active is a
+        # computed property: status == ACTIVE and not is_deleted), and
+        # /auth/verify-email + /auth/verify-phone are non-functional (see
+        # the NOTE below - the verification-code columns don't exist), so
+        # a newly registered account could never become active and every
+        # login/refresh/me call would 401 forever. Defaulting to ACTIVE
+        # here is a deliberate stopgap until real verification exists -
+        # revisit this once that's built.
+        status=AccountStatus.ACTIVE,
     )
 
     # NOTE: email/phone verification codes are not yet persisted - User has
@@ -316,8 +328,8 @@ def register(
     # TODO: Send verification SMS
     
     # Create tokens
-    access_token = create_access_token({"sub": user.id})
-    refresh_token = create_refresh_token({"sub": user.id})
+    access_token = create_access_token({"sub": str(user.id)})
+    refresh_token = create_refresh_token({"sub": str(user.id)})
     
     return TokenResponse(
         access_token=access_token,
@@ -369,7 +381,7 @@ def login(
     # Create tokens. role must be serialized via .value - User.role is a
     # plain (non-str) Enum column, and a raw UserRole member isn't
     # JSON-serializable for jwt.encode().
-    token_data = {"sub": user.id, "username": user.username, "role": user.role.value}
+    token_data = {"sub": str(user.id), "username": user.username, "role": user.role.value}
     
     if request.remember_me:
         access_token = create_access_token(
@@ -428,10 +440,10 @@ def refresh_token(
         )
     
     user_id = payload.get("sub")
-    
+
     # Verify user exists and is active
     user_repo = UserRepository(db)
-    user = user_repo.get_by_id(user_id)
+    user = user_repo.get_by_id(int(user_id)) if user_id else None
     
     if not user or not user.is_active:
         raise HTTPException(
@@ -440,7 +452,7 @@ def refresh_token(
         )
     
     # Create new tokens
-    token_data = {"sub": user.id, "username": user.username, "role": user.role.value}
+    token_data = {"sub": str(user.id), "username": user.username, "role": user.role.value}
     new_access_token = create_access_token(token_data)
     new_refresh_token = create_refresh_token(token_data)
     

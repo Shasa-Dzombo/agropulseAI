@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import '../../features/auth/auth_models.dart';
 import '../../features/auth/auth_repository.dart';
 import '../../features/auth/login_screen.dart';
+import '../../features/farms/farm_list_screen.dart';
 
-/// Placeholder landing screen post-login - proves the auth round trip works
-/// end to end. Farm list, alerts, diagnosis flow, etc. come next.
+/// Landing screen post-login. Alerts, diagnosis flow, etc. come next.
 class HomeScreen extends StatelessWidget {
   final UserInfo user;
 
@@ -36,6 +36,12 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 8),
             Text('@${user.username} · ${user.role} · ${user.subscriptionTier} tier'),
             Text(user.county == null || user.county!.isEmpty ? 'No county set' : user.county!),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FarmListScreen())),
+              icon: const Icon(Icons.grass),
+              label: const Text('View farms'),
+            ),
           ],
         ),
       ),

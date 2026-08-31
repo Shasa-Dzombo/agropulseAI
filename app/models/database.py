@@ -637,10 +637,13 @@ class Farm(Base, TimestampMixin, SoftDeleteMixin, AuditMixin, GeoLocationMixin, 
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     farm_code = Column(String(50), unique=True, nullable=True, index=True)
-    
+    farm_type = Column(String(50), nullable=True)  # mixed, organic, commercial, etc.
+    primary_crop = Column(String(100), nullable=True)
+
     # Size and boundaries
     size_acres = Column(Float, nullable=False)
     size_hectares = Column(Float, nullable=True)
+    cultivated_area_acres = Column(Float, nullable=True)
     boundary_geojson = Column(JSONB, nullable=True)  # GeoJSON polygon
     boundary_geometry = Column(Geometry(geometry_type='POLYGON', srid=4326), nullable=True)
     
@@ -663,6 +666,7 @@ class Farm(Base, TimestampMixin, SoftDeleteMixin, AuditMixin, GeoLocationMixin, 
     # Water and irrigation
     water_source = Column(String(100), nullable=True)  # river, borehole, rain, etc.
     irrigation_type = Column(String(100), nullable=True)  # drip, sprinkler, flood, none
+    has_irrigation = Column(Boolean, default=False)
     water_availability = Column(String(50), nullable=True)  # abundant, adequate, limited, scarce
     
     # Climate and environment
@@ -717,6 +721,7 @@ class Farm(Base, TimestampMixin, SoftDeleteMixin, AuditMixin, GeoLocationMixin, 
     
     # Status and activity
     is_active = Column(Boolean, default=True, index=True)
+    verification_status = Column(String(50), default='pending', nullable=False)  # pending, verified, rejected
     last_harvest_date = Column(Date, nullable=True)
     next_planting_date = Column(Date, nullable=True)
     

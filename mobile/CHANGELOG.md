@@ -47,4 +47,17 @@ Running log of milestones for the Flutter app (`mobile/`). Kept lean on purpose 
 
 Ran the app for real (`flutter run -d web-server`, driven through the browser tool — no Android emulator/AVD exists yet, this doesn't touch the Android-native secure-storage path but does exercise the full UI + API integration) against the live backend: login with a real account, home screen shows the correct user, "View farms" shows the real seeded farm list with correct names/counties/acreages. No console errors. Closes the "not yet run in the app UI" gap from last night.
 
-**Next up:** create an Android AVD to verify the native path (secure storage) too; fix `POST /farms` (create) and `GET /farms/{id}` (detail) per the backend section above; then the camera-upload → diagnosis flow.
+## 2026-08-31 (morning) — Farms CRUD fully fixed
+
+Root cause on all the remaining `farms` bugs: **the codebase has two parallel model layers** ("Universe A" - `app/models/user.py` etc., tracked by Alembic, used by the async `app.database.get_db`; "Universe B" - the one giant `app/models/database.py`, *not* tracked by Alembic at all, used by the sync `app.db_config.get_production_db_dependency` that every real endpoint actually depends on). `app/api/farms.py` and `app/repositories/farm.py` were written assuming `Farm` had columns that were simply never added to Universe B's table: `primary_crop`, `farm_type`, `has_irrigation`, `verification_status`, `cultivated_area_acres`. Also: `Farm.owner_id` was being referred to as `user_id` in six places, and `FarmDetailResponse`/`FarmUpdateRequest` called it `global_gap_certified` where the model has `gap_certified`.
+
+Fixed:
+- Added the five missing columns to the `Farm` model and applied them to the live DB via `scripts/patch_farms_table.py` (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, idempotent) - following this repo's existing convention for Universe B schema changes (Alembic doesn't reach this table; see `scripts/patch_users_table.py` for precedent). **No existing data was touched or lost.**
+- `user_id` → `owner_id` everywhere in `app/api/farms.py` (create call + 6x `check_farm_access` calls).
+- `global_gap_certified` → `gap_certified` in the response/update schemas, matching the model.
+- `uuid: str` → `uuid: UUID` in `FarmDetailResponse` and `FieldResponse` (same Pydantic v2 coercion issue fixed in `FarmListResponse` earlier).
+- `create_field` was passing a `size_hectares` kwarg the `Field` model doesn't have - removed.
+
+**Verified live, full lifecycle:** create farm (with `farm_type`/`primary_crop`/`has_irrigation`) → get detail → update (`PATCH`) → create a field under it → list fields → soft-delete. All correct. `GET /farms` (list) still healthy afterward.
+
+**Next up:** create an Android AVD to verify the native path (secure storage) too; then the camera-upload → diagnosis flow. (Register-screen UX improvements - county dropdown, show/hide password, password generator - and the farm-data-capture/dashboards/social-discovery/chama ideas are queued for after this.)

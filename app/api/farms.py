@@ -73,7 +73,7 @@ class FarmUpdateRequest(BaseModel):
     irrigation_type: Optional[str] = None
     has_irrigation: Optional[bool] = None
     organic_certified: Optional[bool] = None
-    global_gap_certified: Optional[bool] = None
+    gap_certified: Optional[bool] = None
 
 
 class FarmListResponse(BaseModel):
@@ -83,10 +83,6 @@ class FarmListResponse(BaseModel):
     name: str
     county: str
     size_acres: float
-    # Neither primary_crop nor verification_status exist on the Farm model
-    # (see app/models/database.py) - defaulted to None rather than added as
-    # real columns, which would need a migration. Revisit if the mobile app
-    # ends up needing real values here.
     primary_crop: Optional[str] = None
     latitude: float
     longitude: float
@@ -101,8 +97,8 @@ class FarmListResponse(BaseModel):
 class FarmDetailResponse(BaseModel):
     """Detailed farm response."""
     id: int
-    uuid: str
-    user_id: int
+    uuid: UUID
+    owner_id: int
     name: str
     description: Optional[str]
     farm_code: Optional[str]
@@ -134,8 +130,8 @@ class FarmDetailResponse(BaseModel):
     
     # Certifications
     organic_certified: bool
-    global_gap_certified: bool
-    
+    gap_certified: bool
+
     # Status
     is_active: bool
     verification_status: str
@@ -168,7 +164,7 @@ class FieldCreateRequest(BaseModel):
 class FieldResponse(BaseModel):
     """Field response."""
     id: int
-    uuid: str
+    uuid: UUID
     farm_id: int
     name: str
     size_acres: float
@@ -304,7 +300,7 @@ async def create_farm(
     size_hectares = request.size_acres * 0.404686
     
     farm = farm_repo.create(
-        user_id=current_user['id'],
+        owner_id=current_user['id'],
         name=request.name,
         description=request.description,
         latitude=request.latitude,
@@ -429,7 +425,7 @@ async def get_farm(
             detail="Farm not found"
         )
     
-    check_farm_access(current_user, farm.user_id)
+    check_farm_access(current_user, farm.owner_id)
     
     return farm
 
@@ -456,7 +452,7 @@ async def update_farm(
             detail="Farm not found"
         )
     
-    check_farm_access(current_user, farm.user_id)
+    check_farm_access(current_user, farm.owner_id)
     
     # Filter out None values
     update_data = {k: v for k, v in request.dict().items() if v is not None}
@@ -500,7 +496,7 @@ async def delete_farm(
             detail="Farm not found"
         )
     
-    check_farm_access(current_user, farm.user_id)
+    check_farm_access(current_user, farm.owner_id)
     
     if permanent and current_user['role'] not in ['admin', 'superuser']:
         raise HTTPException(
@@ -537,7 +533,7 @@ async def get_farm_fields(
             detail="Farm not found"
         )
     
-    check_farm_access(current_user, farm.user_id)
+    check_farm_access(current_user, farm.owner_id)
     
     fields = farm_repo.get_fields(farm_id)
     
@@ -569,17 +565,15 @@ async def create_field(
             detail="Farm not found"
         )
     
-    check_farm_access(current_user, farm.user_id)
-    
-    # Convert acres to hectares
-    size_hectares = request.size_acres * 0.404686
-    
+    check_farm_access(current_user, farm.owner_id)
+
+    # Note: unlike Farm, the Field model has no size_hectares column - don't
+    # pass one to the constructor (it would reject the unknown kwarg).
     field = Field(
         farm_id=farm_id,
         name=request.name,
         description=request.description,
         size_acres=request.size_acres,
-        size_hectares=size_hectares,
         soil_type=request.soil_type,
         boundary_geojson=request.boundary_geojson
     )
@@ -612,7 +606,7 @@ async def get_farm_plantings(
             detail="Farm not found"
         )
     
-    check_farm_access(current_user, farm.user_id)
+    check_farm_access(current_user, farm.owner_id)
     
     if active_only:
         plantings = farm_repo.get_active_plantings(farm_id)

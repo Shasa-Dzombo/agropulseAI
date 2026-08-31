@@ -30,6 +30,8 @@
 	<string>AgroPulse needs camera access to photograph crops for AI disease diagnosis.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>AgroPulse needs photo library access to select crop photos for AI disease diagnosis.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>AgroPulse uses your location to fill in your farm's coordinates when you add it.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

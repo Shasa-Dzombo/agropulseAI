@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
+import 'farm_create_screen.dart';
 import 'farm_models.dart';
 import 'farm_repository.dart';
 
@@ -25,10 +26,22 @@ class _FarmListScreenState extends State<FarmListScreen> {
     await _future;
   }
 
+  Future<void> _addFarm() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const FarmCreateScreen()),
+    );
+    if (created == true) _refresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Farms')),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addFarm,
+        tooltip: 'Add farm',
+        child: const Icon(Icons.add),
+      ),
       body: FutureBuilder<PaginatedFarms>(
         future: _future,
         builder: (context, snapshot) {

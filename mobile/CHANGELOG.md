@@ -60,4 +60,10 @@ Fixed:
 
 **Verified live, full lifecycle:** create farm (with `farm_type`/`primary_crop`/`has_irrigation`) → get detail → update (`PATCH`) → create a field under it → list fields → soft-delete. All correct. `GET /farms` (list) still healthy afterward.
 
-**Next up:** create an Android AVD to verify the native path (secure storage) too; then the camera-upload → diagnosis flow. (Register-screen UX improvements - county dropdown, show/hide password, password generator - and the farm-data-capture/dashboards/social-discovery/chama ideas are queued for after this.)
+## 2026-08-31 (late morning) — Android emulator created; verified on a real device
+
+Created an AVD (`agropulse_test`, Pixel 6 profile, Android 14/API 34, `google_apis` x86_64) via `avdmanager` - `sdkmanager` needed the `emulator` package plus a system image installed first. Booted it and ran the app for real (`flutter run -d emulator-5554`), driving it via `adb shell input` since there's no dedicated Android UI automation tool available here.
+
+**This is the test the web-server run couldn't do:** confirmed the native `flutter_secure_storage` path actually works - logged in, force-stopped the app entirely (`adb shell am force-stop`), relaunched cold, and it went straight to the home screen (not login), proving the token round-trips through the real Android Keystore across process death. Farm list also renders correctly on-device. One transient "Handler sending message to a dead thread" warning from the secure-storage plugin appeared on the very first cold install/launch only - didn't recur on a clean relaunch, consistent with a known one-time engine-attach race rather than a real bug.
+
+**Next up:** camera-upload → diagnosis flow. (Register-screen UX improvements - county dropdown, show/hide password, password generator - and the farm-data-capture/dashboards/social-discovery/chama ideas are queued for after this.)

@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
 
 import 'api_config.dart';
 import 'api_exception.dart';
@@ -36,6 +38,52 @@ class ApiClient {
 
   Future<dynamic> post(String path, {Map<String, dynamic>? body, bool auth = false, Map<String, dynamic>? query}) =>
       _send('POST', path, body: body, auth: auth, query: query);
+
+  /// Multipart file upload (e.g. POST /diagnoses/upload-image). Kept separate
+  /// from [_send] - multipart requests don't share its JSON-body shape - but
+  /// mirrors its auth-header and refresh-on-401 handling.
+  Future<dynamic> uploadFile(
+    String path, {
+    required String fieldName,
+    required List<int> bytes,
+    required String filename,
+    bool isRetry = false,
+  }) async {
+    late http.StreamedResponse streamed;
+    try {
+      final request = http.MultipartRequest('POST', _uri(path));
+      final token = await TokenStorage.instance.accessToken;
+      if (token != null) request.headers['Authorization'] = 'Bearer $token';
+      // http.MultipartFile.fromBytes sends no Content-Type by default, which
+      // makes the backend's `file.content_type.startswith("image/")` check
+      // reject the upload outright ("File must be an image") even for a
+      // real image - look it up from the filename instead of leaving it unset.
+      final mimeType = lookupMimeType(filename) ?? 'application/octet-stream';
+      request.files.add(http.MultipartFile.fromBytes(
+        fieldName,
+        bytes,
+        filename: filename,
+        contentType: MediaType.parse(mimeType),
+      ));
+      streamed = await request.send();
+    } catch (e) {
+      throw ApiException.network(e);
+    }
+
+    final response = await http.Response.fromStream(streamed);
+
+    if (response.statusCode == 401 && !isRetry && refreshAccessToken != null) {
+      final refreshed = await refreshAccessToken!();
+      if (refreshed) {
+        return uploadFile(path, fieldName: fieldName, bytes: bytes, filename: filename, isRetry: true);
+      }
+    }
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body);
+    }
+    throw ApiException(_extractDetail(response), statusCode: response.statusCode);
+  }
 
   Future<dynamic> _send(
     String method,

@@ -74,4 +74,12 @@ Rewrote `app/api/diagnoses.py` from scratch against Universe B instead of trying
 
 **Verified live, full round trip:** register → upload a real image (local disk) → create diagnosis → Claude vision call actually fires → get/list diagnosis. The only failure left is `"Your credit balance is too low to access the Anthropic API"` - the exact same Anthropic billing blocker flagged at the very start of this work, now confirmed to be the *only* thing standing between this feature and working end-to-end. Everything else - upload, persistence, error handling (stored as a clean `status: "failed"` with the real error message, no crash) - is solid.
 
-**Next up:** the actual camera-upload/diagnosis screen in the mobile app. Register-screen UX improvements and the farm-data-capture/dashboards/social-discovery/chama ideas are still queued for after this.
+## 2026-08-31 (afternoon, cont'd) — Camera-upload/diagnosis screen, end to end
+
+Built the mobile side against the rewritten `/diagnoses` API: `DiagnosisUploadScreen` (camera or gallery via `image_picker`, optional symptoms note) → `DiagnosisResultScreen` (loading/failed/completed states - primary diagnosis, severity, confidence, treatment, prevention). Added `ApiClient.uploadFile()` for multipart uploads with the same auth/refresh-on-401 handling as the JSON methods. Camera permission added to both `AndroidManifest.xml` and `Info.plist` (iOS unbuildable here, but right for whenever there's a Mac).
+
+**Found and fixed a real bug during on-device testing:** `http.MultipartFile.fromBytes()` sends no `Content-Type` by default, which made the backend's `file.content_type.startswith("image/")` check reject every upload with "File must be an image" - including real images. Fixed by looking up the MIME type from the filename (`mime` package) and setting it explicitly on the multipart file part.
+
+**Verified the complete flow on the Android emulator**, driven via `adb shell input` + screenshots: Home → "Diagnose a plant" → picked an image from the gallery (pushed a test JPEG onto the emulator first) → filled in symptoms → submitted → landed on `DiagnosisResultScreen` showing a clean "Diagnosis failed" state with the real Anthropic error message rendered in the UI. Same billing blocker as everywhere else today - the pipeline itself (pick → upload → create → render result) is fully working.
+
+**Next up:** register-screen UX improvements (county dropdown, show/hide password, password generator) and the farm-data-capture/dashboards/social-discovery/chama ideas, all previously queued. Once Anthropic credits are added, the whole diagnosis flow should work with zero further code changes.

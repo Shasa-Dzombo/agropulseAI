@@ -4,8 +4,9 @@ import '../../features/auth/auth_models.dart';
 import '../../features/auth/auth_repository.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/farms/farm_list_screen.dart';
+import '../../features/diagnosis/diagnosis_upload_screen.dart';
 
-/// Landing screen post-login. Alerts, diagnosis flow, etc. come next.
+/// Landing screen post-login. More farmer flows come next.
 class HomeScreen extends StatelessWidget {
   final UserInfo user;
 
@@ -41,6 +42,13 @@ class HomeScreen extends StatelessWidget {
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FarmListScreen())),
               icon: const Icon(Icons.grass),
               label: const Text('View farms'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () =>
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DiagnosisUploadScreen())),
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Diagnose a plant'),
             ),
           ],
         ),

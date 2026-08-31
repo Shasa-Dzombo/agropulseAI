@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
+import '../../core/password_field.dart';
 import '../home/home_screen.dart';
 import 'auth_repository.dart';
 import 'register_screen.dart';
@@ -72,10 +73,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                   ),
                   const SizedBox(height: 16),
-                  TextFormField(
+                  PasswordField(
                     controller: _passwordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
                     validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
                     onFieldSubmitted: (_) => _submit(),
                   ),

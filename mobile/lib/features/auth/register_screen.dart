@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
+import '../../core/kenya_counties.dart';
+import '../../core/password_field.dart';
 import '../home/home_screen.dart';
 import 'auth_repository.dart';
 
@@ -17,8 +19,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _fullNameController = TextEditingController();
-  final _countyController = TextEditingController();
   final _passwordController = TextEditingController();
+  String? _selectedCounty;
   bool _loading = false;
 
   @override
@@ -27,7 +29,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _phoneController.dispose();
     _fullNameController.dispose();
-    _countyController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -42,7 +43,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         phoneNumber: _phoneController.text.trim(),
         password: _passwordController.text,
         fullName: _fullNameController.text.trim(),
-        county: _countyController.text.trim(),
+        county: _selectedCounty,
       );
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
@@ -107,15 +108,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   },
                 ),
                 const SizedBox(height: 16),
-                TextFormField(
-                  controller: _countyController,
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedCounty,
                   decoration: const InputDecoration(labelText: 'County (optional)', border: OutlineInputBorder()),
+                  isExpanded: true,
+                  items: kenyaCounties
+                      .map((county) => DropdownMenuItem(value: county, child: Text(county)))
+                      .toList(),
+                  onChanged: (value) => setState(() => _selectedCounty = value),
                 ),
                 const SizedBox(height: 16),
-                TextFormField(
+                PasswordField(
                   controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
+                  showGenerateAction: true,
                   validator: (v) => (v == null || v.length < 8) ? 'At least 8 characters' : null,
                 ),
                 const SizedBox(height: 24),

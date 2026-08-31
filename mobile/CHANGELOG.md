@@ -82,4 +82,12 @@ Built the mobile side against the rewritten `/diagnoses` API: `DiagnosisUploadSc
 
 **Verified the complete flow on the Android emulator**, driven via `adb shell input` + screenshots: Home → "Diagnose a plant" → picked an image from the gallery (pushed a test JPEG onto the emulator first) → filled in symptoms → submitted → landed on `DiagnosisResultScreen` showing a clean "Diagnosis failed" state with the real Anthropic error message rendered in the UI. Same billing blocker as everywhere else today - the pipeline itself (pick → upload → create → render result) is fully working.
 
-**Next up:** register-screen UX improvements (county dropdown, show/hide password, password generator) and the farm-data-capture/dashboards/social-discovery/chama ideas, all previously queued. Once Anthropic credits are added, the whole diagnosis flow should work with zero further code changes.
+## 2026-08-31 (evening) — Register-screen UX polish
+
+- **County dropdown** — `kenyaCounties` (all 47, alphabetical) via `DropdownButtonFormField`, replacing the free-text field.
+- **Show/hide password** — extracted a shared `PasswordField` widget (eye-icon toggle) used on both login and register, so the two don't drift.
+- **Generate a strong password** — magic-wand action (register only) fills the field with a 14-character CSPRNG-generated password (`Random.secure()`, mixed case/digits/symbols, ambiguous characters like `0/O`, `1/l/I` excluded) and auto-reveals it so the user can see/save what they got.
+
+Verified on the emulator via `adb shell uiautomator dump` for exact widget bounds (screenshots alone weren't precise enough to hit small icon buttons reliably) - both suffix icons render side by side with no clipping, county selection updates the field correctly, generate-then-reveal-then-hide all work as designed.
+
+**Next up:** farm-data-capture/dashboards/social-discovery/chama ideas - starting with auditing the existing Digital Chama backend before designing the proximity/friend-request layer on top of it. Once Anthropic credits are added, the diagnosis flow should work with zero further code changes.

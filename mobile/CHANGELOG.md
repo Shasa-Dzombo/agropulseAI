@@ -43,4 +43,8 @@ Running log of milestones for the Flutter app (`mobile/`). Kept lean on purpose 
 
 **Farm-list screen added** (`lib/features/farms/`) - `FarmListScreen`, `FarmRepository.listFarms()`, reachable from a "View farms" button on `HomeScreen`. Pull-to-refresh, empty state, error state with retry. Model parsing tested against the exact JSON shape captured from the live `GET /farms` fix above. **Not yet run in the app UI itself** (would need a full Android rebuild, ~10+ minutes - out of tonight's remaining window) - verified via `flutter analyze` (clean), unit tests (model parsing), and the separate live `curl` check of the endpoint it calls. Worth an actual on-device run next session before trusting it fully.
 
-**Next up:** run the farm-list screen on-device to confirm end-to-end; then fix `POST /farms` (create) and `GET /farms/{id}` (detail) per the backend section above; then the camera-upload → diagnosis flow.
+## 2026-08-31 (morning) — Login + farm list confirmed working in the running app
+
+Ran the app for real (`flutter run -d web-server`, driven through the browser tool — no Android emulator/AVD exists yet, this doesn't touch the Android-native secure-storage path but does exercise the full UI + API integration) against the live backend: login with a real account, home screen shows the correct user, "View farms" shows the real seeded farm list with correct names/counties/acreages. No console errors. Closes the "not yet run in the app UI" gap from last night.
+
+**Next up:** create an Android AVD to verify the native path (secure storage) too; fix `POST /farms` (create) and `GET /farms/{id}` (detail) per the backend section above; then the camera-upload → diagnosis flow.

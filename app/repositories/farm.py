@@ -334,27 +334,30 @@ class FarmRepository(BaseRepository[Farm]):
         min_acres: float,
         max_acres: float,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        owner_id: Optional[int] = None
     ) -> List[Farm]:
         """
         Get farms within size range.
-        
+
         Args:
             min_acres: Minimum size in acres
             max_acres: Maximum size in acres
             skip: Number of records to skip
             limit: Maximum number of records to return
-            
+            owner_id: Restrict to this owner's farms only (None = all owners)
+
         Returns:
             List of farms within size range
         """
-        return self.db.query(Farm).filter(
-            and_(
-                Farm.size_acres >= min_acres,
-                Farm.size_acres <= max_acres,
-                Farm.is_deleted == False
-            )
-        ).offset(skip).limit(limit).all()
+        conditions = [
+            Farm.size_acres >= min_acres,
+            Farm.size_acres <= max_acres,
+            Farm.is_deleted == False
+        ]
+        if owner_id is not None:
+            conditions.append(Farm.owner_id == owner_id)
+        return self.db.query(Farm).filter(and_(*conditions)).offset(skip).limit(limit).all()
     
     def get_large_farms(
         self,

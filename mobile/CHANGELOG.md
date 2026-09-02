@@ -144,6 +144,16 @@ Added `FarmSatelliteMap` (`farm_satellite_map.dart`) using `flutter_map` with Es
 
 **Verified live on-device**: opened a real farm and watched actual aerial imagery of Thika, Kenya render - visible roads, farm plots, tree cover, a marker on the exact coordinates. `flutter analyze` clean, all 10 tests still pass.
 
-While testing, noticed the weather card showed "Access denied" for that farm and confirmed via direct API calls this is correct, pre-existing behavior, not a regression: `GET /farms/{id}/weather` is ownership-scoped (404s for a farm you don't own) while `GET /farms` (the list) is not scoped at all - so the list happily shows farms belonging to other users, but tapping into one and checking its weather fails. Not fixed here - same shape of issue as the pagination-ownership question, worth resolving together: either scope the list to the current user's own farms, or scope weather access the same way the list is scoped.
+While testing, noticed the weather card showed "Access denied" for that farm and confirmed via direct API calls this is correct, pre-existing behavior, not a regression: `GET /farms/{id}/weather` is ownership-scoped (404s for a farm you don't own) while `GET /farms` (the list) is not scoped at all - so the list happily shows farms belonging to other users, but tapping into one and checking its weather fails.
+
+## 2026-09-02 (afternoon, cont'd) — Fixed the farm-list/weather ownership mismatch
+
+`GET /farms` (`app/api/farms.py`) had no owner scoping at all - it listed every farm belonging to every user in the system, filterable only by county/crop/size/organic/verified. Meanwhile `GET /farms/{id}/weather` correctly 404s for a farm you don't own via `check_farm_access`. Net effect: the farm list would show you farms you had no actual access to, and tapping into one to check its weather would fail.
+
+Fixed by scoping `list_farms` to the caller's own farms (`owner_id` added to the filter dict, and threaded through the separate `get_by_size_range` query path too, which is used instead of the general filter path whenever `min_size`/`max_size` is passed) - using the exact same role check `check_farm_access` already uses, so `admin`/`agronomist`/`superuser` roles still see everyone's farms (a legitimate need for those roles) while a regular farmer only ever sees farms they can actually open.
+
+**Verified live via curl**: `farmtester1`'s list went from all 242 farms in the system down to the 2 they actually own, and `GET /farms/{id}/weather` now returns `200` for every farm the list shows - the two endpoints agree with each other. This was also a real, unintentional privacy leak (any logged-in user could see every other user's farm names, counties, and sizes) fixed as a side effect, not just a UX inconsistency.
+
+Mobile needed no changes - `FarmListScreen`'s pagination and `FarmRepository.listFarms()` already just render whatever the backend returns. All 10 Flutter tests still pass.
 
 **Next up:** the previously-deferred dashboards/social-discovery/chama queue - starting with auditing the existing Digital Chama backend before designing the proximity/friend-request layer on top of it.

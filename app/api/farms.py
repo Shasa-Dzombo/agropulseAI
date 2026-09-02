@@ -246,7 +246,7 @@ async def list_farms(
     - **verified_only**: Show only verified farms (default: false)
     """
     farm_repo = FarmRepository(db)
-    
+
     # Build filters
     filters = {}
     if organic_only:
@@ -257,16 +257,27 @@ async def list_farms(
         filters['county'] = county
     if crop:
         filters['primary_crop'] = crop
-    
+
+    # Scope to the caller's own farms unless they hold a role that's allowed
+    # to see everyone's - same role check as check_farm_access below, so a
+    # farm visible in this list is always one the caller can actually open
+    # (e.g. view its weather). Previously unscoped, which leaked every
+    # farmer's farm name/county/size to any other logged-in user.
+    owner_id = None
+    if current_user['role'] not in ['admin', 'agronomist', 'superuser']:
+        owner_id = current_user['id']
+        filters['owner_id'] = owner_id
+
     # Get farms
     skip = (page - 1) * page_size
-    
+
     if min_size is not None or max_size is not None:
         farms = farm_repo.get_by_size_range(
             min_acres=min_size or 0,
             max_acres=max_size or 999999,
             skip=skip,
-            limit=page_size
+            limit=page_size,
+            owner_id=owner_id
         )
         total = len(farms)  # Approximate
     else:

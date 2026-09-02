@@ -26,6 +26,47 @@ void main() {
     expect(farm.sizeAcres, closeTo(35.66, 0.01));
   });
 
+  test('FarmWeather.fromJson parses a real GET /farms/{id}/weather response', () {
+    final weather = FarmWeather.fromJson({
+      'farm_id': 803,
+      'current': {
+        'temperature_c': 16.02,
+        'feels_like_c': 15.98,
+        'humidity_pct': 88,
+        'wind_speed_ms': 4.63,
+        'rainfall_mm': 0.0,
+        'conditions': 'overcast clouds',
+        'observed_at': '2026-09-02T09:43:27',
+      },
+      'disease_pressure': {
+        'risk_level': 'high',
+        'indicators': [
+          'High humidity (88%) with moderate temperature (16.0°C) favors extended leaf wetness and fungal spore germination',
+        ],
+      },
+      'agricultural_alerts': [],
+    });
+
+    expect(weather.temperatureC, closeTo(16.02, 0.01));
+    expect(weather.humidityPct, 88);
+    expect(weather.diseaseRiskLevel, 'high');
+    expect(weather.diseaseIndicators, hasLength(1));
+    expect(weather.alerts, isEmpty);
+  });
+
+  test('AgriculturalAlert.fromJson parses a real alert shape', () {
+    final alert = AgriculturalAlert.fromJson({
+      'alert_type': 'frost',
+      'severity': 'critical',
+      'description': 'Frost conditions detected. Crops at risk.',
+      'recommendations': ['Cover sensitive plants', 'Harvest vulnerable crops immediately'],
+    });
+
+    expect(alert.alertType, 'frost');
+    expect(alert.severity, 'critical');
+    expect(alert.recommendations, hasLength(2));
+  });
+
   test('PaginatedFarms.fromJson parses the envelope and item list', () {
     final page = PaginatedFarms.fromJson({
       'items': [

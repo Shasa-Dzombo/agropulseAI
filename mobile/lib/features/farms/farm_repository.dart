@@ -33,4 +33,9 @@ class FarmRepository {
       'has_irrigation': hasIrrigation,
     });
   }
+
+  Future<FarmWeather> getFarmWeather(int farmId) async {
+    final json = await _api.get('/farms/$farmId/weather', auth: true);
+    return FarmWeather.fromJson(json as Map<String, dynamic>);
+  }
 }

@@ -16,12 +16,14 @@ Endpoints:
 - POST /farms/{farm_id}/fields - Create growing zone
 - GET /farms/{farm_id}/plantings - Get crop plantings
 - POST /farms/{farm_id}/verify - Verify facility
+- GET /farms/{farm_id}/weather - Current weather, agricultural alerts, and disease-pressure risk
 
 Note: 'farms' endpoint maintained for API compatibility, but represents greenhouse facilities.
 
 Author: AgroPulse Engineering Team
 """
 
+import asyncio
 from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
@@ -32,6 +34,8 @@ from sqlalchemy.orm import Session
 from app.db_config import get_production_db_dependency
 from app.repositories.farm import FarmRepository
 from app.api.auth import get_current_user
+from app.schemas.drone import WeatherSnapshotOut, DiseasePressureOut, AgriculturalAlertOut
+from app.services.weather_service import get_openweather_client, fetch_weather_snapshot, assess_disease_pressure
 
 
 router = APIRouter(prefix="/farms", tags=["Greenhouse Facilities"])
@@ -426,8 +430,74 @@ async def get_farm(
         )
     
     check_farm_access(current_user, farm.owner_id)
-    
+
     return farm
+
+
+class FarmWeatherOut(BaseModel):
+    """Current weather for a farm's location, plus agricultural alerts and
+    disease-pressure risk - see app.services.weather_service. Advisory only."""
+    farm_id: int
+    current: WeatherSnapshotOut
+    disease_pressure: DiseasePressureOut
+    agricultural_alerts: List[AgriculturalAlertOut] = []
+
+
+@router.get("/{farm_id}/weather", response_model=FarmWeatherOut)
+async def get_farm_weather(
+    farm_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency)
+):
+    """
+    Current weather, agricultural alerts (frost/heat/drought/flood/wind),
+    and disease-pressure risk for a farm's location, via OpenWeatherMap.
+    """
+    farm_repo = FarmRepository(db)
+    farm = farm_repo.get_by_id(farm_id)
+
+    if not farm:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found")
+
+    check_farm_access(current_user, farm.owner_id)
+
+    client = get_openweather_client()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Weather service is not configured")
+
+    weather = await fetch_weather_snapshot(client, farm.latitude, farm.longitude)
+    if weather is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch current weather")
+
+    forecast = await asyncio.to_thread(client.get_5day_forecast, farm.latitude, farm.longitude)
+    alerts = await asyncio.to_thread(client.get_agricultural_alerts, farm.latitude, farm.longitude, weather, forecast)
+    disease_pressure = assess_disease_pressure(weather)
+
+    return FarmWeatherOut(
+        farm_id=farm.id,
+        current=WeatherSnapshotOut(
+            temperature_c=weather.temperature,
+            feels_like_c=weather.feels_like,
+            humidity_pct=weather.humidity,
+            wind_speed_ms=weather.wind_speed,
+            rainfall_mm=weather.rainfall,
+            conditions=weather.description,
+            observed_at=weather.timestamp,
+        ),
+        disease_pressure=DiseasePressureOut(
+            risk_level=disease_pressure.risk_level,
+            indicators=disease_pressure.indicators,
+        ),
+        agricultural_alerts=[
+            AgriculturalAlertOut(
+                alert_type=a.alert_type,
+                severity=a.severity,
+                description=a.description,
+                recommendations=a.recommendations,
+            )
+            for a in alerts
+        ],
+    )
 
 
 @router.patch("/{farm_id}", response_model=FarmDetailResponse)

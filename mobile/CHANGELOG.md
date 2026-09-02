@@ -128,4 +128,12 @@ Tried reducing the AVD's `hw.ramSize` in `config.ini` - the emulator overrides t
 
 Also noticed in passing (not fixed, out of scope for today): `FarmListScreen` has no pagination and only ever loads the first page of results, so on a system with 240+ farms a newly-created farm can be unreachable from the list UI. Worth fixing before this app has real users with more than a handful of farms.
 
-**Next up:** the previously-deferred dashboards/social-discovery/chama queue - starting with auditing the existing Digital Chama backend before designing the proximity/friend-request layer on top of it. Also worth a quick on-device check of the weather screen (backend + models are verified, only the UI render itself is unconfirmed) and adding farm-list pagination.
+**Next up:** the previously-deferred dashboards/social-discovery/chama queue - starting with auditing the existing Digital Chama backend before designing the proximity/friend-request layer on top of it. Also worth a quick on-device check of the weather screen (backend + models are verified, only the UI render itself is unconfirmed).
+
+## 2026-09-02 (late morning) — Farm-list pagination
+
+Fixed the gap flagged above: `FarmListScreen` now does real infinite-scroll pagination (`ListView` + `ScrollController`, fetches the next page from `GET /farms` when within 300px of the bottom) instead of loading only the first 20 of a system that can have 240+ farms.
+
+Also fixed the more direct version of the same bug: a newly-created farm was unreachable because the backend lists farms oldest-first, so a brand-new farm would land at the very end of a long list even with pagination in place - scrolling through hundreds of entries to see the farm you just made is a bad experience regardless. `FarmRepository.createFarm()` now returns the created `Farm` (parsed straight from the `POST /farms` response, which already carries everything needed), and `FarmCreateScreen` pops it back to the list screen, which inserts it at the top of the currently-displayed list immediately - no reload, no scrolling required, and no wasted API call.
+
+`flutter analyze` clean, all 10 tests pass. **Not re-verified on-device** - hit the same flaky adb-driven text-input focus issue from earlier sessions (typed text landing in the wrong field) while trying to log back in after a rebuild, and judged it not worth more time chasing given the underlying logic (`Farm.fromJson` on the `POST /farms` shape, the `listFarms()`/`PaginatedFarms` plumbing) was already proven correct via the live GPS test earlier this session.

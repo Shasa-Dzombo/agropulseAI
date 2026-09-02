@@ -12,7 +12,7 @@ class FarmRepository {
     return PaginatedFarms.fromJson(json as Map<String, dynamic>);
   }
 
-  Future<void> createFarm({
+  Future<Farm> createFarm({
     required String name,
     required double latitude,
     required double longitude,
@@ -22,7 +22,7 @@ class FarmRepository {
     String? primaryCrop,
     bool hasIrrigation = false,
   }) async {
-    await _api.post('/farms', auth: true, body: {
+    final json = await _api.post('/farms', auth: true, body: {
       'name': name,
       'latitude': latitude,
       'longitude': longitude,
@@ -32,6 +32,7 @@ class FarmRepository {
       'primary_crop': ?primaryCrop,
       'has_irrigation': hasIrrigation,
     });
+    return Farm.fromJson(json as Map<String, dynamic>);
   }
 
   Future<FarmWeather> getFarmWeather(int farmId) async {

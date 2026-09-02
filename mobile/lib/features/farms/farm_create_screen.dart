@@ -75,7 +75,7 @@ class _FarmCreateScreenState extends State<FarmCreateScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await FarmRepository.instance.createFarm(
+      final farm = await FarmRepository.instance.createFarm(
         name: _nameController.text.trim(),
         latitude: double.parse(_latController.text),
         longitude: double.parse(_lngController.text),
@@ -86,7 +86,7 @@ class _FarmCreateScreenState extends State<FarmCreateScreen> {
         hasIrrigation: _hasIrrigation,
       );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(farm);
     } on ApiException catch (e) {
       _showError(e.message);
     } finally {

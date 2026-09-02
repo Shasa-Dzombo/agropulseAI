@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -52,11 +54,16 @@ class _FarmCreateScreenState extends State<FarmCreateScreen> {
         _showError('Location services are off. Enter coordinates manually.');
         return;
       }
+      // geolocator's own `timeLimit` isn't reliably honored on Android (seen
+      // hanging well past it on-device) - wrap in our own timeout as a
+      // guaranteed backstop so this button can never spin forever.
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 15)),
-      );
+      ).timeout(const Duration(seconds: 15));
       _latController.text = position.latitude.toStringAsFixed(6);
       _lngController.text = position.longitude.toStringAsFixed(6);
+    } on TimeoutException {
+      _showError('Timed out getting location. Enter coordinates manually.');
     } catch (e) {
       _showError('Could not get location. Enter coordinates manually.');
     } finally {

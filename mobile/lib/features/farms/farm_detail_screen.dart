@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/api_exception.dart';
 import 'farm_models.dart';
 import 'farm_repository.dart';
+import 'farm_satellite_map.dart';
 
 class FarmDetailScreen extends StatefulWidget {
   final Farm farm;
@@ -76,6 +77,14 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                   ],
                 ),
               ),
+            ),
+            const SizedBox(height: 16),
+            Text('Satellite view', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            FarmSatelliteMap(
+              latitude: farm.latitude,
+              longitude: farm.longitude,
+              farmName: farm.name,
             ),
             const SizedBox(height: 16),
             Text('Weather', style: Theme.of(context).textTheme.titleMedium),

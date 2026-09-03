@@ -47,6 +47,7 @@ class ApiClient {
     required String fieldName,
     required List<int> bytes,
     required String filename,
+    Map<String, String>? fields,
     bool isRetry = false,
   }) async {
     late http.StreamedResponse streamed;
@@ -54,6 +55,7 @@ class ApiClient {
       final request = http.MultipartRequest('POST', _uri(path));
       final token = await TokenStorage.instance.accessToken;
       if (token != null) request.headers['Authorization'] = 'Bearer $token';
+      if (fields != null) request.fields.addAll(fields);
       // http.MultipartFile.fromBytes sends no Content-Type by default, which
       // makes the backend's `file.content_type.startswith("image/")` check
       // reject the upload outright ("File must be an image") even for a
@@ -75,7 +77,7 @@ class ApiClient {
     if (response.statusCode == 401 && !isRetry && refreshAccessToken != null) {
       final refreshed = await refreshAccessToken!();
       if (refreshed) {
-        return uploadFile(path, fieldName: fieldName, bytes: bytes, filename: filename, isRetry: true);
+        return uploadFile(path, fieldName: fieldName, bytes: bytes, filename: filename, fields: fields, isRetry: true);
       }
     }
 

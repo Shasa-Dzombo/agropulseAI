@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
+import '../drones/drone_flight_list_screen.dart';
 import 'farm_models.dart';
 import 'farm_repository.dart';
 import 'farm_satellite_map.dart';
@@ -77,6 +78,16 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
                   ],
                 ),
               ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => DroneFlightListScreen(
+                  farmId: farm.id, farmLatitude: farm.latitude, farmLongitude: farm.longitude,
+                ),
+              )),
+              icon: const Icon(Icons.flight_takeoff),
+              label: const Text('Drone flights'),
             ),
             const SizedBox(height: 16),
             Text('Satellite view', style: Theme.of(context).textTheme.titleMedium),

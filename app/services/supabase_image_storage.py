@@ -21,7 +21,7 @@ import boto3
 from app.config import settings
 
 
-async def save_image_to_supabase(content: bytes, file_name: str, folder: str) -> str:
+def save_image_to_supabase(content: bytes, file_name: str, folder: str) -> str:
     key = f"{folder}/{file_name}"
 
     client = boto3.client(

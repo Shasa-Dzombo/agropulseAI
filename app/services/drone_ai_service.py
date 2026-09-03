@@ -13,6 +13,17 @@ here drives a physical aircraft - the simulated and real MAVLink flight
 backends that used to live under app/drones/flight/ were removed, since this
 project's actual hardware is flown manually and neither backend was ever
 reachable from it.
+
+Rewritten 2026-09-02 to target Universe B (app.db_config / app.models.database
+- the real login/farm system, same as app.api.farms and app.api.diagnoses)
+instead of Universe A's async app.database session and app.models.user.Farm.
+The drone-specific tables (drone_flights, drone_images, drone_image_analyses,
+drone_telemetry_logs) didn't move - they're plain tables in the same Postgres
+database either way, just with their farm_id/requested_by_id/diagnosis_id
+foreign keys repointed at the real farms/users/diagnoses tables (see
+scripts/patch_drone_universe_b_fks.py). A sync Session works with any mapped
+class regardless of which declarative Base defined it, so nothing here
+needed to move onto Universe B's Base either.
 """
 
 import logging
@@ -25,7 +36,7 @@ import cv2
 import numpy as np
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.drones.flight import _console  # noqa: F401 - must run before any drone_orchard_system import
 
@@ -40,20 +51,15 @@ from app.models.drone import (
     DroneImage,
     DroneImageAnalysis,
 )
-from app.models.user import Farm
-from app.services.ai_service import aws_ai_service
-from app.services._kindwise_client_loader import CropType, KindwiseAPIClient
+from app.models.database import Farm
 from app.services.canopy_overlay_rendering import render_vigor_overlay
 from app.services.canopy_vigor_assessment import assess_canopy_vigor
 from app.services.dji_gsd_estimation import estimate_ground_sampling_distance_cm
 from app.services.exif_gps import extract_gps_from_image_bytes
-from app.services.kindwise_crop_mapping import map_farm_crop_type_to_kindwise
-from app.services.kindwise_disease_service import get_kindwise_client, run_disease_detection
 from app.services.plant_stress_assessment import assess_plant_stress
 from app.services.weather_service import (
     assess_disease_pressure,
     assess_flight_conditions,
-    fetch_weather_snapshot,
     get_openweather_client,
 )
 
@@ -70,8 +76,16 @@ def _safe_float(value: float) -> Optional[float]:
         return None
 
 
-async def _default_image_uploader(content: bytes, file_name: str, folder: str) -> str:
-    return await aws_ai_service.upload_to_s3(content, file_name, folder=folder)
+def _default_image_uploader(content: bytes, file_name: str, folder: str) -> str:
+    """Real S3 upload (app.services.ai_service.AWSAIService.upload_to_s3) -
+    that method is async (a blocking boto3 call wrapped in async def with no
+    real concurrency benefit, same as the local/Supabase uploaders were
+    before this rewrite), so it's bridged here with asyncio.run() rather than
+    changing its signature - it's shared with other, still-Universe-A code
+    this rewrite doesn't otherwise touch."""
+    import asyncio
+    from app.services.ai_service import aws_ai_service
+    return asyncio.run(aws_ai_service.upload_to_s3(content, file_name, folder=folder))
 
 
 def _nearest_waypoint_tree_id(mission_plan: List[dict], latitude: float, longitude: float) -> Optional[str]:
@@ -93,11 +107,11 @@ def _nearest_waypoint_tree_id(mission_plan: List[dict], latitude: float, longitu
 
 
 class DroneAIService:
-    def __init__(self, db: AsyncSession, image_uploader: Optional[Callable] = None):
+    def __init__(self, db: Session, image_uploader: Optional[Callable] = None):
         self.db = db
         self._upload = image_uploader or _default_image_uploader
 
-    async def _apply_weather_context(self, flight: DroneFlight) -> None:
+    def _apply_weather_context(self, flight: DroneFlight) -> None:
         """Real OpenWeatherMap conditions at the flight's home coordinates -
         advisory only (app.services.weather_service). Never raises and never
         blocks the mission: any failure here just leaves the weather_* columns
@@ -107,7 +121,10 @@ class DroneAIService:
             if client is None:
                 return
 
-            weather = await fetch_weather_snapshot(client, flight.home_latitude, flight.home_longitude)
+            # fetch_weather_snapshot is an async wrapper (asyncio.to_thread)
+            # around this same blocking call, for callers on an event loop -
+            # this service is fully sync, so it calls the client directly.
+            weather = client.get_current_weather(flight.home_latitude, flight.home_longitude)
             if weather is None:
                 return
 
@@ -122,12 +139,12 @@ class DroneAIService:
             flight.weather_warnings = conditions.warnings
             flight.weather_disease_pressure = disease_pressure.risk_level
             flight.weather_checked_at = datetime.utcnow()
-            await self.db.commit()
+            self.db.commit()
         except Exception:
             logger.exception("Weather context lookup failed for flight %s - proceeding without it", flight.id)
-            await self.db.rollback()
+            self.db.rollback()
 
-    async def _render_and_upload_overlay(
+    def _render_and_upload_overlay(
         self, rgb: np.ndarray, vigor, flight_id: int, waypoint_index: int,
         ground_sampling_distance_cm: Optional[float],
     ) -> Optional[str]:
@@ -144,7 +161,7 @@ class DroneAIService:
             if not ok:
                 logger.warning("Could not JPEG-encode the vigor overlay for flight %s image %s", flight_id, waypoint_index)
                 return None
-            return await self._upload(
+            return self._upload(
                 buf.tobytes(), f"{waypoint_index}_overlay.jpg", f"drone-imagery/{flight_id}"
             )
         except Exception:
@@ -154,21 +171,35 @@ class DroneAIService:
             )
             return None
 
-    async def _process_and_persist_image(
+    def _process_and_persist_image(
         self, image: MultispectralImage, processor: MultispectralProcessor,
         flight_id: int, waypoint_index: int, tree_id: Optional[str],
         latitude: float, longitude: float, altitude: float,
         ground_sampling_distance_cm: Optional[float],
         rgb_url: Optional[str], nir_url: Optional[str],
-        farmer_id: Optional[int] = None,
         run_disease_detection_for_mission: bool = False,
-        kindwise_client: Optional[KindwiseAPIClient] = None,
-        kindwise_crop_type: Optional[CropType] = None,
         exclude_shaded_canopy: bool = False,
     ) -> DroneImage:
         """Called from the manual DJI-ingestion upload path
-        (ingest_captured_image below) - the one real NDVI/stress/vigor/
-        Kindwise pipeline every captured photo goes through."""
+        (ingest_captured_image below) - the one real NDVI/stress/vigor
+        pipeline every captured photo goes through.
+
+        run_disease_detection_for_mission is accepted but not yet supported
+        post-rewrite: the Kindwise disease-detection integration it used to
+        call still creates Universe A Diagnosis rows (app.models.diagnosis),
+        which nothing reads any more (the real diagnosis flow is
+        app.api.diagnoses, Universe B). Wiring per-image drone disease
+        detection to that instead is real, separate follow-up work - no
+        caller currently passes True here (see app.api.drones.py), so this
+        raises clearly instead of silently doing the wrong thing if that
+        ever changes without the follow-up work being done first.
+        """
+        if run_disease_detection_for_mission:
+            raise NotImplementedError(
+                "Per-image drone disease detection isn't wired to Universe B yet - "
+                "see this method's docstring."
+            )
+
         drone_image = DroneImage(
             flight_id=flight_id,
             waypoint_index=waypoint_index,
@@ -181,7 +212,7 @@ class DroneAIService:
             ground_sampling_distance_cm=ground_sampling_distance_cm,
         )
         self.db.add(drone_image)
-        await self.db.flush()
+        self.db.flush()
 
         indices = processor.process_multispectral_image(image)
         ndvi = _safe_float(indices.ndvi)
@@ -191,7 +222,7 @@ class DroneAIService:
             ground_sampling_distance_cm=ground_sampling_distance_cm,
             exclude_shaded_canopy=exclude_shaded_canopy,
         )
-        overlay_url = await self._render_and_upload_overlay(
+        overlay_url = self._render_and_upload_overlay(
             image.rgb, vigor, flight_id, waypoint_index, ground_sampling_distance_cm,
         )
         self.db.add(DroneImageAnalysis(
@@ -212,15 +243,9 @@ class DroneAIService:
             overlay_url=overlay_url,
         ))
 
-        if run_disease_detection_for_mission:
-            drone_image.diagnosis_id = await run_disease_detection(
-                self.db, kindwise_client, kindwise_crop_type, image.rgb, rgb_url,
-                farmer_id, latitude, longitude,
-            )
-
         return drone_image
 
-    async def start_manual_flight(
+    def start_manual_flight(
         self, farm_id: int, user_id: int, drone_id: str,
         home_latitude: float, home_longitude: float, home_altitude: float = 0.0,
         mission_plan: Optional[List[dict]] = None,
@@ -249,13 +274,13 @@ class DroneAIService:
             started_at=datetime.utcnow(),
         )
         self.db.add(flight)
-        await self.db.commit()
-        await self.db.refresh(flight)
+        self.db.commit()
+        self.db.refresh(flight)
 
-        await self._apply_weather_context(flight)
+        self._apply_weather_context(flight)
         return flight
 
-    async def ingest_captured_image(
+    def ingest_captured_image(
         self, flight_id: int, user_id: int,
         rgb_bytes: bytes, nir_bytes: Optional[bytes], red_edge_bytes: Optional[bytes],
         tree_id: Optional[str] = None,
@@ -276,7 +301,7 @@ class DroneAIService:
         image and used to convert canopy-vigor region pixel areas into real
         m^2 (app.services.canopy_vigor_assessment); otherwise those stay
         unknown rather than a fabricated guess."""
-        flight = await self._get_owned_flight_or_raise(flight_id, user_id)
+        flight = self._get_owned_flight_or_raise(flight_id, user_id)
         if flight.backend_type != DroneBackendType.MANUAL_INGEST:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This flight is not a manual-ingest flight")
         if flight.status != DroneFlightStatus.IN_PROGRESS:
@@ -333,34 +358,33 @@ class DroneAIService:
             ground_sampling_distance=0.0,
         )
 
-        count_result = await self.db.execute(
+        waypoint_index = self.db.execute(
             select(func.count()).select_from(DroneImage).where(DroneImage.flight_id == flight_id)
-        )
-        waypoint_index = count_result.scalar_one()
+        ).scalar_one()
 
         folder = f"drone-imagery/{flight_id}"
         _, rgb_buf = cv2.imencode(".jpg", rgb)
-        rgb_url = await self._upload(rgb_buf.tobytes(), f"{waypoint_index}_rgb.jpg", folder)
+        rgb_url = self._upload(rgb_buf.tobytes(), f"{waypoint_index}_rgb.jpg", folder)
         nir_url = None
         if nir_bytes:
             _, nir_buf = cv2.imencode(".jpg", nir)
-            nir_url = await self._upload(nir_buf.tobytes(), f"{waypoint_index}_nir.jpg", folder)
+            nir_url = self._upload(nir_buf.tobytes(), f"{waypoint_index}_nir.jpg", folder)
 
         processor = MultispectralProcessor()
-        drone_image = await self._process_and_persist_image(
+        drone_image = self._process_and_persist_image(
             image, processor, flight_id, waypoint_index, tree_id,
             latitude, longitude, altitude, ground_sampling_distance_cm, rgb_url, nir_url,
             exclude_shaded_canopy=exclude_shaded_canopy,
         )
-        await self.db.commit()
-        await self.db.refresh(drone_image)
+        self.db.commit()
+        self.db.refresh(drone_image)
         return drone_image
 
-    async def complete_manual_flight(
+    def complete_manual_flight(
         self, flight_id: int, user_id: int, status_value: str,
         error_message: Optional[str] = None, battery_end_pct: Optional[float] = None,
     ) -> DroneFlight:
-        flight = await self._get_owned_flight_or_raise(flight_id, user_id)
+        flight = self._get_owned_flight_or_raise(flight_id, user_id)
         if flight.backend_type != DroneBackendType.MANUAL_INGEST:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This flight is not a manual-ingest flight")
         if flight.status != DroneFlightStatus.IN_PROGRESS:
@@ -373,40 +397,37 @@ class DroneAIService:
         flight.completed_at = datetime.utcnow()
         flight.error_message = error_message
         flight.battery_end_pct = battery_end_pct
-        await self.db.commit()
-        await self.db.refresh(flight)
+        self.db.commit()
+        self.db.refresh(flight)
         return flight
 
-    async def get_flight(self, flight_id: int, user_id: int) -> DroneFlight:
-        return await self._get_owned_flight_or_raise(flight_id, user_id)
+    def get_flight(self, flight_id: int, user_id: int) -> DroneFlight:
+        return self._get_owned_flight_or_raise(flight_id, user_id)
 
-    async def list_flights(self, farm_id: int, user_id: int) -> List[DroneFlight]:
-        result = await self.db.execute(
+    def list_flights(self, farm_id: int, user_id: int) -> List[DroneFlight]:
+        farm = self.db.execute(
             select(Farm).where(Farm.id == farm_id, Farm.owner_id == user_id)
-        )
-        if result.scalar_one_or_none() is None:
+        ).scalar_one_or_none()
+        if farm is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found or you don't have permission")
 
-        result = await self.db.execute(
+        return list(self.db.execute(
             select(DroneFlight).where(DroneFlight.farm_id == farm_id).order_by(DroneFlight.created_at.desc())
-        )
-        return list(result.scalars().all())
+        ).scalars().all())
 
-    async def list_flight_images(self, flight_id: int, user_id: int) -> List[DroneImage]:
-        await self._get_owned_flight_or_raise(flight_id, user_id)
-        result = await self.db.execute(
+    def list_flight_images(self, flight_id: int, user_id: int) -> List[DroneImage]:
+        self._get_owned_flight_or_raise(flight_id, user_id)
+        return list(self.db.execute(
             select(DroneImage).where(DroneImage.flight_id == flight_id).order_by(DroneImage.waypoint_index)
-        )
-        return list(result.scalars().all())
+        ).scalars().all())
 
-    async def get_flight_analysis_summary(self, flight_id: int, user_id: int) -> Dict:
-        await self._get_owned_flight_or_raise(flight_id, user_id)
+    def get_flight_analysis_summary(self, flight_id: int, user_id: int) -> Dict:
+        self._get_owned_flight_or_raise(flight_id, user_id)
 
-        result = await self.db.execute(
+        analyses = list(self.db.execute(
             select(DroneImageAnalysis).join(DroneImage, DroneImage.id == DroneImageAnalysis.image_id)
             .where(DroneImage.flight_id == flight_id)
-        )
-        analyses = list(result.scalars().all())
+        ).scalars().all())
 
         ndvis = [a.ndvi for a in analyses if a.ndvi is not None]
         histogram: Dict[str, int] = {}
@@ -433,12 +454,11 @@ class DroneAIService:
             "vigor_level_histogram": vigor_histogram,
         }
 
-    async def _get_owned_flight_or_raise(self, flight_id: int, user_id: int) -> DroneFlight:
-        result = await self.db.execute(
+    def _get_owned_flight_or_raise(self, flight_id: int, user_id: int) -> DroneFlight:
+        flight = self.db.execute(
             select(DroneFlight).join(Farm, Farm.id == DroneFlight.farm_id)
             .where(DroneFlight.id == flight_id, Farm.owner_id == user_id)
-        )
-        flight = result.scalar_one_or_none()
+        ).scalar_one_or_none()
         if flight is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flight not found or you don't have permission")
         return flight

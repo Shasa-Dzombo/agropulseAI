@@ -1,14 +1,13 @@
-import asyncio
-
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.database import get_db
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+
+from app.db_config import get_production_db_dependency
 from app.models.diagnosis import Diagnosis, DiseaseCategory
 from app.models.drone import DroneImageAnalysis
-from app.models.user import Farm, User
+from app.models.database import Farm
 from app.schemas.drone import (
     DroneFlightResponse, DroneImageResponse,
     DroneImageAnalysisResponse, FlightAnalysisSummary, DiseaseAnswer,
@@ -16,7 +15,7 @@ from app.schemas.drone import (
     DiseasePressureOut, AgriculturalAlertOut,
     CreateManualFlightRequest, CompleteFlightRequest, KmlWaypointsResponse,
 )
-from app.auth import get_current_farmer, get_current_user
+from app.api.auth import get_current_user
 from app.config import settings
 from app.services.drone_ai_service import DroneAIService
 from app.services.kml_mission_parser import parse_kml_waypoints
@@ -24,13 +23,13 @@ from app.services.local_image_storage import save_image_locally
 from app.services.supabase_image_storage import save_image_to_supabase
 from app.services.weather_service import (
     assess_disease_pressure, assess_flight_conditions,
-    fetch_weather_snapshot, geocode_location, get_openweather_client,
+    get_openweather_client,
 )
 
 router = APIRouter(prefix="/drones", tags=["Drone Orchard Survey"])
 
 
-def _build_service(db: AsyncSession) -> DroneAIService:
+def _build_service(db: Session) -> DroneAIService:
     """Uses local-disk or Supabase image storage per DRONE_IMAGE_STORAGE
     instead of the default real S3 uploader (e.g. no AWS credentials
     configured, or Supabase Storage preferred)."""
@@ -47,7 +46,15 @@ def _build_disease_answer(diagnosis: Optional[Diagnosis]) -> Optional[DiseaseAns
     from_attributes traversal - Diagnosis's field names (primary_diagnosis,
     confidence_score, severity_level, treatment_recommendations) don't match
     DiseaseAnswer's, so that would silently produce an all-defaults/empty
-    answer instead of an error."""
+    answer instead of an error.
+
+    Always receives None today: DroneImage.diagnosis_id is only ever set by
+    the per-image disease-detection path, which raises NotImplementedError
+    rather than run (see DroneAIService._process_and_persist_image) - it
+    still creates the old Universe A Diagnosis row this function expects,
+    which nothing else in the app reads any more. Left in place, rather than
+    deleted, so this only needs revisiting once, in one place, when that
+    integration is redone against the real (Universe B) diagnosis flow."""
     if diagnosis is None:
         return None
 
@@ -67,13 +74,13 @@ def _build_disease_answer(diagnosis: Optional[Diagnosis]) -> Optional[DiseaseAns
 
 
 @router.post("/flights/parse-kml", response_model=KmlWaypointsResponse)
-async def parse_kml_mission(
+def parse_kml_mission(
     file: UploadFile = File(...),
     action: str = Form("take_photo"),
     default_altitude: float = Form(30.0),
     speed: float = Form(10.0),
     gimbal_pitch: float = Form(-90.0),
-    current_user: User = Depends(get_current_farmer),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Converts an uploaded .kml file's Placemarks into waypoints, one per
@@ -82,7 +89,7 @@ async def parse_kml_mission(
     or touch the DB - review/edit the returned waypoints, then attach them as
     mission_plan on POST /flights/manual for nearest-GPS photo auto-tagging.
     """
-    kml_bytes = await file.read()
+    kml_bytes = file.file.read()
     try:
         waypoints, warnings = parse_kml_waypoints(
             kml_bytes, action=action, default_altitude=default_altitude,
@@ -95,10 +102,10 @@ async def parse_kml_mission(
 
 
 @router.post("/flights/manual", response_model=DroneFlightResponse, status_code=status.HTTP_201_CREATED)
-async def create_manual_flight(
+def create_manual_flight(
     flight_data: CreateManualFlightRequest,
-    current_user: User = Depends(get_current_farmer),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """
     Start a flight that's being flown manually outside this system (e.g. DJI's
@@ -111,19 +118,19 @@ async def create_manual_flight(
     but its tree_id values (if any) are used to auto-tag incoming photos by
     nearest real-GPS match.
     """
-    result = await db.execute(
-        select(Farm).where(Farm.id == flight_data.farm_id, Farm.owner_id == current_user.id)
-    )
-    if result.scalar_one_or_none() is None:
+    farm = db.execute(
+        select(Farm).where(Farm.id == flight_data.farm_id, Farm.owner_id == current_user["id"])
+    ).scalar_one_or_none()
+    if farm is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Farm not found or you don't have permission",
         )
 
     service = _build_service(db)
-    flight = await service.start_manual_flight(
+    flight = service.start_manual_flight(
         farm_id=flight_data.farm_id,
-        user_id=current_user.id,
+        user_id=current_user["id"],
         drone_id=flight_data.drone_id,
         home_latitude=flight_data.home_latitude,
         home_longitude=flight_data.home_longitude,
@@ -134,7 +141,7 @@ async def create_manual_flight(
 
 
 @router.post("/flights/{flight_id}/images", response_model=DroneImageResponse, status_code=status.HTTP_201_CREATED)
-async def upload_manual_flight_image(
+def upload_manual_flight_image(
     flight_id: int,
     rgb: UploadFile = File(...),
     nir: Optional[UploadFile] = File(None),
@@ -142,8 +149,8 @@ async def upload_manual_flight_image(
     tree_id: Optional[str] = Form(None),
     ground_sampling_distance_cm: Optional[float] = Form(None),
     exclude_shaded_canopy: bool = Form(False),
-    current_user: User = Depends(get_current_farmer),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """
     Push one captured photo (real DJI multispectral bands, or any RGB photo)
@@ -168,25 +175,23 @@ async def upload_manual_flight_image(
     separate before relying on the difference it makes.
     """
     service = _build_service(db)
-    rgb_bytes = await rgb.read()
-    nir_bytes = await nir.read() if nir is not None else None
-    red_edge_bytes = await red_edge.read() if red_edge is not None else None
+    rgb_bytes = rgb.file.read()
+    nir_bytes = nir.file.read() if nir is not None else None
+    red_edge_bytes = red_edge.file.read() if red_edge is not None else None
 
-    image = await service.ingest_captured_image(
-        flight_id, current_user.id, rgb_bytes, nir_bytes, red_edge_bytes,
+    image = service.ingest_captured_image(
+        flight_id, current_user["id"], rgb_bytes, nir_bytes, red_edge_bytes,
         tree_id=tree_id, ground_sampling_distance_cm=ground_sampling_distance_cm,
         exclude_shaded_canopy=exclude_shaded_canopy,
     )
 
     # Queried directly by image_id rather than via image.analysis: image was
-    # just built in this same request (ingest_captured_image's db.refresh()
-    # only refreshes its own columns), so the selectin relationship hasn't
-    # been populated - a fresh query is simpler and safer than forcing a
-    # relationship (re)load on a freshly-committed async object.
-    analysis_result = await db.execute(
+    # just built in this same request, and the selectin relationship isn't
+    # guaranteed to be populated on a just-flushed/refreshed object - a fresh
+    # query is simpler and safer than forcing a relationship (re)load.
+    analysis_row = db.execute(
         select(DroneImageAnalysis).where(DroneImageAnalysis.image_id == image.id)
-    )
-    analysis_row = analysis_result.scalar_one_or_none()
+    ).scalar_one_or_none()
 
     return DroneImageResponse(
         id=image.id,
@@ -207,59 +212,61 @@ async def upload_manual_flight_image(
 
 
 @router.post("/flights/{flight_id}/complete", response_model=DroneFlightResponse)
-async def complete_manual_flight(
+def complete_manual_flight(
     flight_id: int,
     body: CompleteFlightRequest,
-    current_user: User = Depends(get_current_farmer),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """Marks a manual-ingest flight COMPLETED or ABORTED."""
     service = DroneAIService(db)
-    flight = await service.complete_manual_flight(
-        flight_id, current_user.id, body.status,
+    flight = service.complete_manual_flight(
+        flight_id, current_user["id"], body.status,
         error_message=body.error_message, battery_end_pct=body.battery_end_pct,
     )
     return DroneFlightResponse.model_validate(flight)
 
 
 @router.get("/flights", response_model=List[DroneFlightResponse])
-async def list_flights(
+def list_flights(
     farm_id: int,
-    current_user: User = Depends(get_current_farmer),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """List drone survey flights for a farm."""
     service = DroneAIService(db)
-    flights = await service.list_flights(farm_id, current_user.id)
+    flights = service.list_flights(farm_id, current_user["id"])
     return [DroneFlightResponse.model_validate(f) for f in flights]
 
 
 @router.get("/flights/{flight_id}", response_model=DroneFlightResponse)
-async def get_flight(
+def get_flight(
     flight_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """Get a single drone flight's status and details."""
     service = DroneAIService(db)
-    flight = await service.get_flight(flight_id, current_user.id)
+    flight = service.get_flight(flight_id, current_user["id"])
     return DroneFlightResponse.model_validate(flight)
 
 
 @router.get("/flights/{flight_id}/images", response_model=List[DroneImageResponse])
-async def list_flight_images(
+def list_flight_images(
     flight_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """List captured aerial images for a flight."""
     service = DroneAIService(db)
-    images = await service.list_flight_images(flight_id, current_user.id)
+    images = service.list_flight_images(flight_id, current_user["id"])
     # Built explicitly rather than DroneImageResponse.model_validate(image):
-    # image.diagnosis is a raw Diagnosis ORM object, and DiseaseAnswer isn't
-    # itself from_attributes-configured, so letting model_validate try to
-    # auto-coerce it raises a ValidationError - _build_disease_answer does
-    # the real field mapping instead.
+    # DiseaseAnswer isn't itself from_attributes-configured, so letting
+    # model_validate try to auto-coerce a diagnosis row raises a
+    # ValidationError - _build_disease_answer does the real field mapping
+    # instead. diagnosis_id is always None today (see app/models/drone.py's
+    # DroneImage.diagnosis_id comment), so _build_disease_answer is called
+    # with None here rather than a query - nothing to look up yet.
     return [
         DroneImageResponse(
             id=image.id,
@@ -273,7 +280,7 @@ async def list_flight_images(
             altitude=image.altitude,
             ground_sampling_distance_cm=image.ground_sampling_distance_cm,
             diagnosis_id=image.diagnosis_id,
-            diagnosis=_build_disease_answer(image.diagnosis),
+            diagnosis=_build_disease_answer(None),
             analysis=DroneImageAnalysisResponse.model_validate(image.analysis) if image.analysis else None,
             captured_at=image.captured_at,
         )
@@ -282,35 +289,35 @@ async def list_flight_images(
 
 
 @router.get("/flights/{flight_id}/analysis", response_model=FlightAnalysisSummary)
-async def get_flight_analysis(
+def get_flight_analysis(
     flight_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """Aggregate NDVI/health-status summary across all imagery captured on a flight."""
     service = DroneAIService(db)
-    summary = await service.get_flight_analysis_summary(flight_id, current_user.id)
+    summary = service.get_flight_analysis_summary(flight_id, current_user["id"])
     return FlightAnalysisSummary(**summary)
 
 
 @router.get("/weather", response_model=FarmWeatherResponse)
-async def get_farm_weather(
+def get_farm_weather(
     farm_id: int,
-    current_user: User = Depends(get_current_farmer),
-    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
 ):
     """
     Real current weather, UAV flight-suitability, and disease-pressure
     context for a farm - usable to check conditions before a mission is even
     planned (DroneFlightResponse.weather_* only populates once a mission has
-    actually been executed). Uses the farm's latitude/longitude when set;
-    otherwise falls back to geocoding Farm.location (a real place name, e.g.
-    "Thika, KE" - distinct from Farm.name) via OpenWeatherMap's Geocoding API.
+    actually been executed). Uses the farm's latitude/longitude - unlike the
+    Universe A version this replaced, Farm here (app.models.database.Farm)
+    always has real coordinates set (required on POST /farms), so there's no
+    separate geocode-a-place-name fallback to carry over.
     """
-    result = await db.execute(
-        select(Farm).where(Farm.id == farm_id, Farm.owner_id == current_user.id)
-    )
-    farm = result.scalar_one_or_none()
+    farm = db.execute(
+        select(Farm).where(Farm.id == farm_id, Farm.owner_id == current_user["id"])
+    ).scalar_one_or_none()
     if farm is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found or you don't have permission")
 
@@ -318,27 +325,12 @@ async def get_farm_weather(
     if client is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OPENWEATHER_API_KEY is not configured")
 
-    latitude, longitude = farm.latitude, farm.longitude
-    if latitude is None or longitude is None:
-        if not farm.location:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Farm has no latitude/longitude and no location set - set one of them first",
-            )
-        geocoded = await geocode_location(client, farm.location)
-        if geocoded is None:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Could not resolve farm location '{farm.location}' to coordinates",
-            )
-        latitude, longitude = geocoded
-
-    weather = await fetch_weather_snapshot(client, latitude, longitude)
+    weather = client.get_current_weather(farm.latitude, farm.longitude)
     if weather is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch current weather from OpenWeatherMap")
 
-    forecast = await asyncio.to_thread(client.get_5day_forecast, latitude, longitude)
-    alerts = await asyncio.to_thread(client.get_agricultural_alerts, latitude, longitude, weather, forecast)
+    forecast = client.get_5day_forecast(farm.latitude, farm.longitude)
+    alerts = client.get_agricultural_alerts(farm.latitude, farm.longitude, weather, forecast)
 
     conditions = assess_flight_conditions(weather)
     disease_pressure = assess_disease_pressure(weather)

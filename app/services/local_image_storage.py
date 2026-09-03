@@ -10,7 +10,7 @@ import os
 from app.config import settings
 
 
-async def save_image_locally(content: bytes, file_name: str, folder: str) -> str:
+def save_image_locally(content: bytes, file_name: str, folder: str) -> str:
     target_dir = os.path.join(settings.DRONE_LOCAL_IMAGE_DIR, folder)
     os.makedirs(target_dir, exist_ok=True)
 

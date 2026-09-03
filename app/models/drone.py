@@ -2,6 +2,13 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, 
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+# Real (Universe B) targets for farm_id/requested_by_id/diagnosis_id below -
+# a different declarative Base/registry than this module's own Base, in a
+# different MetaData. A bare ForeignKey("farms.id") string only resolves
+# within the referencing column's own Base.metadata, so it can't find these
+# by name; passing the actual mapped Column (Farm.id etc.) sidesteps that
+# name lookup entirely and works fine across registries.
+from app.models.database import Diagnosis as _UniverseBDiagnosis, Farm as _UniverseBFarm, User as _UniverseBUser
 import enum
 
 
@@ -35,8 +42,8 @@ class DroneFlight(Base):
     __tablename__ = "drone_flights"
 
     id = Column(Integer, primary_key=True, index=True)
-    farm_id = Column(Integer, ForeignKey("app_farms.id"), nullable=False, index=True)
-    requested_by_id = Column(Integer, ForeignKey("app_users.id"), nullable=False, index=True)
+    farm_id = Column(Integer, ForeignKey(_UniverseBFarm.id), nullable=False, index=True)
+    requested_by_id = Column(Integer, ForeignKey(_UniverseBUser.id), nullable=False, index=True)
     drone_id = Column(String(100), nullable=False)
 
     backend_type = Column(SQLEnum(DroneBackendType), nullable=False, default=DroneBackendType.MANUAL_INGEST)
@@ -131,11 +138,19 @@ class DroneImage(Base):
     # True AND a Kindwise API call actually produced a result for this
     # photo. DroneImageAnalysis (NDVI/stress) stays fully decoupled from
     # Diagnosis - they're orthogonal analyses of the same photo.
-    diagnosis_id = Column(Integer, ForeignKey("app_diagnoses.id", ondelete="SET NULL"), nullable=True, index=True)
-    # Read-only link for embedding disease answers in API responses
-    # (app/api/drones.py). selectin batches the load across a whole image
-    # list instead of one query per image.
-    diagnosis = relationship("Diagnosis", lazy="selectin", viewonly=True)
+    #
+    # Always None today: the code path that would set this raises
+    # NotImplementedError (see DroneAIService._process_and_persist_image) -
+    # the per-image disease-detection integration still targets the old
+    # Universe A Diagnosis model, which nothing else in the app reads any
+    # more. No ORM relationship() here on purpose: this FK points at the
+    # real (Universe B) diagnoses table, but Universe A's Diagnosis class
+    # (the only "Diagnosis" in this model's own declarative registry) maps
+    # to a different table with no FK to this one - a relationship() to it
+    # fails mapper configuration outright ("no foreign keys linking these
+    # tables"), not just silently wrong. Query app.models.database.Diagnosis
+    # directly by this id once that integration is redone.
+    diagnosis_id = Column(Integer, ForeignKey(_UniverseBDiagnosis.id, ondelete="SET NULL"), nullable=True, index=True)
     # Read-only link to the real-math NDVI/stress/vigor analysis row for this
     # photo (app.services.plant_stress_assessment /
     # app.services.canopy_vigor_assessment). selectin batches the load

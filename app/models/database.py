@@ -252,7 +252,10 @@ user_chama_association = Table(
     Column('chama_id', Integer, ForeignKey('chamas.id', ondelete='CASCADE'), primary_key=True),
     Column('joined_at', DateTime(timezone=True), server_default=func.now()),
     Column('role', String(50), default='member'),
-    Column('is_active', Boolean, default=True)
+    Column('is_active', Boolean, default=True),
+    # 'pending' until a chairperson/treasurer/secretary approves (see
+    # app/api/chamas.py) - only 'active' counts toward member_count/is_member.
+    Column('status', String(20), default='active'),
 )
 
 # Diagnosis-Expert association (for multi-expert reviews)
@@ -1517,6 +1520,15 @@ class Chama(Base, TimestampMixin, SoftDeleteMixin):
     contact_email = Column(EmailType, nullable=True)
     contact_phone = Column(String(20), nullable=True)
     meeting_location = Column(Text, nullable=True)
+
+    # A reference number members pay into directly via their own M-Pesa app -
+    # not a real payment integration (see app/api/chamas.py's docstring):
+    # nothing in this codebase calls Safaricom's Daraja API or verifies a
+    # payment actually happened. That needs its own Daraja developer
+    # account/paybill and a real public HTTPS deployment for Safaricom's
+    # callback to reach, neither of which exist yet - pinned as a follow-up
+    # once this app is actually deployed, not started here.
+    mpesa_paybill_number = Column(String(20), nullable=True)
     
     # Documents
     constitution_url = Column(URLType, nullable=True)

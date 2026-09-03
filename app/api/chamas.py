@@ -42,9 +42,26 @@ def _is_member(db: Session, chama_id: int, user_id: int) -> bool:
         select(user_chama_association.c.user_id).where(
             user_chama_association.c.chama_id == chama_id,
             user_chama_association.c.user_id == user_id,
-            user_chama_association.c.is_active == True,  # noqa: E712
+            user_chama_association.c.status == 'active',
         )
     ).first() is not None
+
+
+def _is_pending(db: Session, chama_id: int, user_id: int) -> bool:
+    return db.execute(
+        select(user_chama_association.c.user_id).where(
+            user_chama_association.c.chama_id == chama_id,
+            user_chama_association.c.user_id == user_id,
+            user_chama_association.c.status == 'pending',
+        )
+    ).first() is not None
+
+
+def _is_leader(chama: Chama, user_id: int) -> bool:
+    """Chairperson, treasurer, or secretary - any of the three leadership
+    seats on the Chama model can vet new members, matching how a real
+    chama's committee (not just one person) usually handles admissions."""
+    return user_id in (chama.chairperson_id, chama.treasurer_id, chama.secretary_id)
 
 
 def _get_chama_or_404(db: Session, chama_id: int) -> Chama:
@@ -54,9 +71,15 @@ def _get_chama_or_404(db: Session, chama_id: int) -> Chama:
     return chama
 
 
-def _to_response(chama: Chama, is_member: bool) -> ChamaResponse:
+def _to_response(chama: Chama, user_id: int, is_member: bool, is_pending: bool = False) -> ChamaResponse:
     resp = ChamaResponse.model_validate(chama)
     resp.is_member = is_member
+    resp.is_pending = is_pending
+    resp.is_leader = _is_leader(chama, user_id)
+    # The paybill is where members actually send money - visible to members
+    # only, same as the member list and contribution history below.
+    if not is_member:
+        resp.mpesa_paybill_number = None
     return resp
 
 
@@ -79,16 +102,17 @@ def create_chama(
         member_count=1,
         monthly_contribution_ksh=request.monthly_contribution_ksh,
         is_public=request.is_public,
+        mpesa_paybill_number=request.mpesa_paybill_number,
     )
     db.add(chama)
     db.flush()
 
     db.execute(insert(user_chama_association).values(
-        user_id=current_user["id"], chama_id=chama.id, role="chairperson",
+        user_id=current_user["id"], chama_id=chama.id, role="chairperson", status="active",
     ))
     db.commit()
     db.refresh(chama)
-    return _to_response(chama, is_member=True)
+    return _to_response(chama, current_user["id"], is_member=True)
 
 
 @router.get("", response_model=List[ChamaResponse])
@@ -102,12 +126,13 @@ def list_chamas(
     """Public chamas, plus any private ones the caller already belongs to -
     same visibility rule GET /chamas/{id} enforces. mine_only=true narrows
     that down to just the caller's own chamas (public or not)."""
-    member_chama_ids = set(db.execute(
-        select(user_chama_association.c.chama_id).where(
+    membership_rows = db.execute(
+        select(user_chama_association.c.chama_id, user_chama_association.c.status).where(
             user_chama_association.c.user_id == current_user["id"],
-            user_chama_association.c.is_active == True,  # noqa: E712
         )
-    ).scalars().all())
+    ).all()
+    member_chama_ids = {r.chama_id for r in membership_rows if r.status == 'active'}
+    pending_chama_ids = {r.chama_id for r in membership_rows if r.status == 'pending'}
 
     query = select(Chama).where(Chama.is_deleted == False)  # noqa: E712
     if mine_only:
@@ -115,13 +140,17 @@ def list_chamas(
             return []
         query = query.where(Chama.id.in_(member_chama_ids))
     else:
-        query = query.where((Chama.is_public == True) | (Chama.id.in_(member_chama_ids) if member_chama_ids else False))  # noqa: E712
+        known_ids = member_chama_ids | pending_chama_ids
+        query = query.where((Chama.is_public == True) | (Chama.id.in_(known_ids) if known_ids else False))  # noqa: E712
 
     chamas = db.execute(
         query.order_by(Chama.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()
 
-    return [_to_response(c, is_member=c.id in member_chama_ids) for c in chamas]
+    return [
+        _to_response(c, current_user["id"], is_member=c.id in member_chama_ids, is_pending=c.id in pending_chama_ids)
+        for c in chamas
+    ]
 
 
 @router.get("/{chama_id}", response_model=ChamaResponse)
@@ -132,9 +161,10 @@ def get_chama(
 ):
     chama = _get_chama_or_404(db, chama_id)
     is_member = _is_member(db, chama_id, current_user["id"])
+    is_pending = False if is_member else _is_pending(db, chama_id, current_user["id"])
     if not chama.is_public and not is_member:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chama not found")
-    return _to_response(chama, is_member)
+    return _to_response(chama, current_user["id"], is_member, is_pending)
 
 
 @router.post("/{chama_id}/join", response_model=ChamaResponse)
@@ -143,21 +173,98 @@ def join_chama(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency),
 ):
+    """Requests membership - does not grant it. A chairperson/treasurer/
+    secretary must approve via POST /{chama_id}/join-requests/{user_id}/approve
+    before this becomes real membership (is_member stays false; is_pending
+    turns true). This is the vetting step real chamas already do informally
+    before letting someone into the money pool - skipping it was the gap in
+    the first version of this endpoint."""
     chama = _get_chama_or_404(db, chama_id)
     if not chama.is_public:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This chama is not open to new members")
     if _is_member(db, chama_id, current_user["id"]):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member of this chama")
+    if _is_pending(db, chama_id, current_user["id"]):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Your request to join is already pending")
     if chama.max_members is not None and chama.member_count >= chama.max_members:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This chama is full")
 
     db.execute(insert(user_chama_association).values(
-        user_id=current_user["id"], chama_id=chama_id, role="member",
+        user_id=current_user["id"], chama_id=chama_id, role="member", status="pending", is_active=False,
     ))
+    db.commit()
+    db.refresh(chama)
+    return _to_response(chama, current_user["id"], is_member=False, is_pending=True)
+
+
+@router.get("/{chama_id}/join-requests", response_model=List[ChamaMemberResponse])
+def list_join_requests(
+    chama_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    chama = _get_chama_or_404(db, chama_id)
+    if not _is_leader(chama, current_user["id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the chairperson, treasurer, or secretary can view join requests")
+
+    rows = db.execute(
+        select(User.id, User.first_name, User.last_name, User.username, user_chama_association.c.joined_at)
+        .join(user_chama_association, user_chama_association.c.user_id == User.id)
+        .where(user_chama_association.c.chama_id == chama_id, user_chama_association.c.status == 'pending')
+        .order_by(user_chama_association.c.joined_at)
+    ).all()
+
+    return [
+        ChamaMemberResponse(
+            user_id=r.id, full_name=f"{r.first_name} {r.last_name}".strip(),
+            username=r.username, role='pending', joined_at=r.joined_at,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/{chama_id}/join-requests/{user_id}/approve", response_model=ChamaResponse)
+def approve_join_request(
+    chama_id: int,
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    chama = _get_chama_or_404(db, chama_id)
+    if not _is_leader(chama, current_user["id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the chairperson, treasurer, or secretary can approve join requests")
+    if not _is_pending(db, chama_id, user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No pending request from this user")
+
+    db.execute(update(user_chama_association).where(
+        user_chama_association.c.chama_id == chama_id, user_chama_association.c.user_id == user_id,
+    ).values(status='active', is_active=True))
     db.execute(update(Chama).where(Chama.id == chama_id).values(member_count=Chama.member_count + 1))
     db.commit()
     db.refresh(chama)
-    return _to_response(chama, is_member=True)
+    return _to_response(chama, current_user["id"], is_member=True)
+
+
+@router.post("/{chama_id}/join-requests/{user_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
+def reject_join_request(
+    chama_id: int,
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Deletes the pending request rather than marking it 'rejected' -
+    non-punitive, the same person can request again later (e.g. after
+    resolving whatever the leadership's concern was)."""
+    chama = _get_chama_or_404(db, chama_id)
+    if not _is_leader(chama, current_user["id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the chairperson, treasurer, or secretary can reject join requests")
+    if not _is_pending(db, chama_id, user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No pending request from this user")
+
+    db.execute(user_chama_association.delete().where(
+        user_chama_association.c.chama_id == chama_id, user_chama_association.c.user_id == user_id,
+    ))
+    db.commit()
 
 
 @router.get("/{chama_id}/members", response_model=List[ChamaMemberResponse])
@@ -174,7 +281,7 @@ def list_members(
         select(User.id, User.first_name, User.last_name, User.username,
                user_chama_association.c.role, user_chama_association.c.joined_at)
         .join(user_chama_association, user_chama_association.c.user_id == User.id)
-        .where(user_chama_association.c.chama_id == chama_id, user_chama_association.c.is_active == True)  # noqa: E712
+        .where(user_chama_association.c.chama_id == chama_id, user_chama_association.c.status == 'active')
         .order_by(user_chama_association.c.joined_at)
     ).all()
 

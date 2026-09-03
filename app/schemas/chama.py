@@ -11,6 +11,10 @@ class ChamaCreateRequest(BaseModel):
     chama_type: str = Field("savings", pattern="^(savings|investment|welfare|multipurpose)$")
     monthly_contribution_ksh: Optional[Decimal] = Field(None, gt=0)
     is_public: bool = True
+    # Reference only - a paybill members pay into manually via their own
+    # M-Pesa app. Not verified or reconciled by this app; see the column's
+    # comment in app/models/database.py.
+    mpesa_paybill_number: Optional[str] = Field(None, max_length=20)
 
 
 class ChamaResponse(BaseModel):
@@ -25,6 +29,13 @@ class ChamaResponse(BaseModel):
     status: str
     is_public: bool
     is_member: bool = False
+    # True when the caller has an unapproved join request on this chama -
+    # mutually exclusive with is_member (a request stops being "pending" the
+    # moment it's approved and becomes real membership).
+    is_pending: bool = False
+    # Chairperson/treasurer/secretary - can see and act on join requests.
+    is_leader: bool = False
+    mpesa_paybill_number: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:

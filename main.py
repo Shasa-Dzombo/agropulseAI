@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # routers unrelated to it - from starting. Failures are logged, not silenced.
 _ROUTER_MODULES = [
     "auth", "farms", "sensors", "payments", "diagnoses", "optimization", "cctv",
-    "advanced", "drones",
+    "advanced", "drones", "chamas",
 ]
 routers = {}
 for _module_name in _ROUTER_MODULES:
@@ -156,6 +156,8 @@ if "advanced" in routers:
     app.include_router(routers["advanced"].router)  # Advanced features (blockchain, Chama, interventions)
 if "drones" in routers:
     app.include_router(routers["drones"].router, prefix="/api/v1")
+if "chamas" in routers:
+    app.include_router(routers["chamas"].router, prefix="/api/v1")
 
 
 # Health check endpoint

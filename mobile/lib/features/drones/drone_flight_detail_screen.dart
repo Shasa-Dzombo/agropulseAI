@@ -199,13 +199,25 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('${summary.imageCount} photo${summary.imageCount == 1 ? '' : 's'} analyzed'),
-                if (summary.meanNdvi != null) Text('Mean NDVI: ${summary.meanNdvi!.toStringAsFixed(2)}'),
-                if (summary.meanCanopyCoveragePct != null)
-                  Text('Mean canopy coverage: ${summary.meanCanopyCoveragePct!.toStringAsFixed(0)}%'),
+                Text(
+                  'Estimated from ordinary photos, not real infrared readings - a rough scouting cue.',
+                  style: TextStyle(color: Colors.orange.shade800, fontSize: 12),
+                ),
+                if (summary.meanCanopyCoveragePct != null) ...[
+                  const SizedBox(height: 8),
+                  Text('Average canopy coverage: ${summary.meanCanopyCoveragePct!.toStringAsFixed(0)}%'),
+                ],
                 if (summary.healthStatusHistogram.isNotEmpty)
-                  Text('Health: ${summary.healthStatusHistogram.entries.map((e) => '${e.key} (${e.value})').join(', ')}'),
+                  Text('Health: ${summary.healthStatusHistogram.entries.map((e) => '${plainHealthLabel(e.key)} (${e.value})').join(', ')}'),
                 if (summary.vigorLevelHistogram.isNotEmpty)
-                  Text('Vigor: ${summary.vigorLevelHistogram.entries.map((e) => '${e.key} (${e.value})').join(', ')}'),
+                  Text('Vigor: ${summary.vigorLevelHistogram.entries.map((e) => '${plainVigorLabel(e.key) ?? e.key} (${e.value})').join(', ')}'),
+                if (summary.meanNdvi != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Mean vegetation index (NDVI): ${summary.meanNdvi!.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.black54, fontSize: 12),
+                  ),
+                ],
               ],
             ),
           ),
@@ -235,8 +247,9 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
                       subtitle: img.analysis == null
                           ? null
                           : Text([
-                              if (img.analysis!.ndvi != null) 'NDVI ${img.analysis!.ndvi!.toStringAsFixed(2)}',
-                              if (img.analysis!.healthStatus != null) img.analysis!.healthStatus!,
+                              plainHealthLabel(img.analysis!.healthStatus),
+                              if (img.analysis!.canopyCoveragePct != null)
+                                '${img.analysis!.canopyCoveragePct!.toStringAsFixed(0)}% coverage',
                             ].join(' · ')),
                     ))
                 .toList(),

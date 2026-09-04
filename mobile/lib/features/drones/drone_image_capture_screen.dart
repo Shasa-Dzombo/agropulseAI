@@ -132,6 +132,10 @@ class _DroneImageCaptureScreenState extends State<DroneImageCaptureScreen> {
 
   Widget _buildResultCard(DroneImage image) {
     final analysis = image.analysis;
+    final indicators = analysis == null
+        ? const <String>[]
+        : [...analysis.stressIndicators, ...analysis.vigorIndicators];
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -145,17 +149,65 @@ class _DroneImageCaptureScreenState extends State<DroneImageCaptureScreen> {
                 Text('Analyzed', style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
+            if (!image.hasRealNir) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade300),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline, size: 18, color: Colors.orange.shade800),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Estimated from an ordinary photo, not a real infrared sensor. '
+                        'Treat this as a rough scouting cue, not a precise reading.',
+                        style: TextStyle(color: Colors.orange.shade900, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (analysis != null) ...[
               const SizedBox(height: 12),
-              if (analysis.ndvi != null) Text('NDVI: ${analysis.ndvi!.toStringAsFixed(2)}'),
-              if (analysis.healthStatus != null) Text('Health: ${analysis.healthStatus}'),
-              if (analysis.vigorLevel != null) Text('Canopy vigor: ${analysis.vigorLevel}'),
-              if (analysis.canopyCoveragePct != null)
+              Text(_plainSummary(analysis), style: Theme.of(context).textTheme.bodyLarge),
+              if (analysis.canopyCoveragePct != null) ...[
+                const SizedBox(height: 4),
                 Text('Canopy coverage: ${analysis.canopyCoveragePct!.toStringAsFixed(0)}%'),
+              ],
+              if (analysis.ndvi != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Vegetation index (NDVI): ${analysis.ndvi!.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              ],
+              if (indicators.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('What this suggests', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 4),
+                for (final indicator in indicators)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('• $indicator'),
+                  ),
+              ],
             ],
           ],
         ),
       ),
     );
+  }
+
+  String _plainSummary(DroneImageAnalysis analysis) {
+    final health = plainHealthLabel(analysis.healthStatus);
+    final vigor = plainVigorLabel(analysis.vigorLevel);
+    return vigor == null ? health : '$health, $vigor';
   }
 }

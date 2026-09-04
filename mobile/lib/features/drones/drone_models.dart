@@ -1,3 +1,38 @@
+/// Plain-language wording for DroneImageAnalysis.healthStatus/vigorLevel,
+/// shared by the capture-result card and the flight's captured-images list
+/// so a farmer sees the same wording everywhere instead of raw enum values
+/// like "dead" or "moderate_stress". See DroneImage.hasRealNir: this app's
+/// NDVI is currently always an estimate, not a real infrared reading.
+String plainHealthLabel(String? healthStatus) {
+  switch (healthStatus) {
+    case 'healthy':
+      return 'Looks healthy';
+    case 'mild_stress':
+      return 'Slight stress signs';
+    case 'moderate_stress':
+      return 'Moderate stress signs';
+    case 'severe_stress':
+      return 'Significant stress signs';
+    case 'dead':
+      return 'No live vegetation detected';
+    default:
+      return 'Not enough signal to assess';
+  }
+}
+
+String? plainVigorLabel(String? vigorLevel) {
+  switch (vigorLevel) {
+    case 'good':
+      return 'good canopy vigor';
+    case 'moderate':
+      return 'moderate canopy vigor';
+    case 'low':
+      return 'low canopy vigor';
+    default:
+      return null;
+  }
+}
+
 /// Mirrors app/schemas/drone.py's DroneFlightResponse.
 class DroneFlight {
   final int id;
@@ -57,6 +92,8 @@ class DroneImageAnalysis {
   final String? stressLevel;
   final double? canopyCoveragePct;
   final String? vigorLevel;
+  final List<String> stressIndicators;
+  final List<String> vigorIndicators;
 
   DroneImageAnalysis({
     required this.ndvi,
@@ -64,6 +101,8 @@ class DroneImageAnalysis {
     required this.stressLevel,
     required this.canopyCoveragePct,
     required this.vigorLevel,
+    required this.stressIndicators,
+    required this.vigorIndicators,
   });
 
   factory DroneImageAnalysis.fromJson(Map<String, dynamic> json) => DroneImageAnalysis(
@@ -72,6 +111,8 @@ class DroneImageAnalysis {
         stressLevel: json['stress_level'] as String?,
         canopyCoveragePct: (json['canopy_coverage_pct'] as num?)?.toDouble(),
         vigorLevel: json['vigor_level'] as String?,
+        stressIndicators: (json['stress_indicators'] as List?)?.cast<String>() ?? const [],
+        vigorIndicators: (json['vigor_indicators'] as List?)?.cast<String>() ?? const [],
       );
 }
 
@@ -80,13 +121,22 @@ class DroneImageAnalysis {
 /// there's no static file mount serving local_uploads/ over HTTP, so they
 /// can't be loaded as network images here. Deliberately not modeled/shown -
 /// same constraint as diagnosis images, whose result screen also only shows
-/// the AI's text findings, not the photo.
+/// the AI's text findings, not the photo. nir_url's presence IS modeled
+/// (as hasRealNir, not the url itself): the backend only sets it when a real
+/// infrared file was uploaded alongside the RGB photo. The mobile capture
+/// flow never sends one, so hasRealNir is currently always false here - NDVI
+/// on every photo taken through this app is approximated from the RGB
+/// green channel (see app/drones/flight/camera.py's
+/// green_channel_as_nir_placeholder), not a real infrared reading. The
+/// result screen uses this to show an honest caveat instead of stating
+/// "dead"/a precise NDVI number with false confidence.
 class DroneImage {
   final int id;
   final int waypointIndex;
   final String? treeId;
   final DroneImageAnalysis? analysis;
   final DateTime? capturedAt;
+  final bool hasRealNir;
 
   DroneImage({
     required this.id,
@@ -94,6 +144,7 @@ class DroneImage {
     required this.treeId,
     required this.analysis,
     required this.capturedAt,
+    required this.hasRealNir,
   });
 
   factory DroneImage.fromJson(Map<String, dynamic> json) => DroneImage(
@@ -102,6 +153,7 @@ class DroneImage {
         treeId: json['tree_id'] as String?,
         analysis: json['analysis'] == null ? null : DroneImageAnalysis.fromJson(json['analysis'] as Map<String, dynamic>),
         capturedAt: json['captured_at'] == null ? null : DateTime.parse(json['captured_at'] as String),
+        hasRealNir: json['nir_url'] != null,
       );
 }
 

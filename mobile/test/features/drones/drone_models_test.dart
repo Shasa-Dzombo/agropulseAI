@@ -46,10 +46,21 @@ void main() {
     });
 
     expect(image.treeId, 'T-001');
+    expect(image.hasRealNir, isFalse);
     expect(image.analysis, isNotNull);
     expect(image.analysis!.ndvi, closeTo(0.555, 0.001));
     expect(image.analysis!.healthStatus, 'mild_stress');
     expect(image.analysis!.vigorLevel, 'good');
+    expect(image.analysis!.stressIndicators, ['Low NDRE (0.00) - possible nitrogen/chlorophyll deficiency']);
+    expect(image.analysis!.vigorIndicators, isEmpty);
+  });
+
+  test('plainHealthLabel/plainVigorLabel translate raw enum values to farmer-legible wording', () {
+    expect(plainHealthLabel('dead'), 'No live vegetation detected');
+    expect(plainHealthLabel('healthy'), 'Looks healthy');
+    expect(plainHealthLabel(null), 'Not enough signal to assess');
+    expect(plainVigorLabel('good'), 'good canopy vigor');
+    expect(plainVigorLabel(null), isNull);
   });
 
   test('FlightAnalysisSummary.fromJson parses a real aggregate summary', () {

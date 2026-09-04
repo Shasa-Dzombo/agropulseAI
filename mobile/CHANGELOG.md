@@ -224,4 +224,17 @@ Closed out the one open item from the phase-3 drone work: confirmed the camera/g
 
 This closes out drone phase 3 completely - flight list/create/detail and photo capture are now all verified on-device, with the analysis pipeline validated against a real vegetation photo instead of only synthetic test data.
 
-**Next up:** the proximity/friend-request social layer that sits on top of the now-real chama system.
+## 2026-09-04 — Honest drone result presentation
+
+**Correction to the entry above:** re-tested with a real, unambiguous shot of dense, visibly-green standing maize (not a shadowed forest edge) and got essentially the same result - NDVI 0.05, health "dead". That rules out "bad photo" as the explanation. The real cause: this app's mobile capture flow only ever uploads one ordinary RGB photo, never a real infrared band, so `app/drones/flight/camera.py`'s `green_channel_as_nir_placeholder()` stands in for NIR - a fallback its own docstring calls "NOT a real near-infrared reading, NDVI computed from it is not trustworthy." Under this photo's warm lighting that produced a number disconnected from the crop's actual condition. Real accuracy needs a genuine multispectral capture (the DJI Mavic 3M's own MS module output, not its regular camera) - out of scope for now, but the mobile UI no longer hides this from the farmer.
+
+**Mobile presentation fix** (`drone_image_capture_screen.dart`, `drone_flight_detail_screen.dart`, `drone_models.dart`):
+- Added `DroneImage.hasRealNir` (derived client-side from `nir_url != null` - no backend change needed, that field already only gets set when a real NIR file was uploaded). Every photo captured through this app today has `hasRealNir == false`.
+- Whenever `hasRealNir` is false, both the per-photo result card and the flight's analysis summary now show an explicit caveat: "Estimated from an ordinary photo, not a real infrared sensor. Treat this as a rough scouting cue, not a precise reading."
+- Replaced raw enum values ("dead", "moderate_stress") with plain-language wording (`plainHealthLabel`/`plainVigorLabel` in `drone_models.dart`, shared by both screens) - e.g. "dead" now reads "No live vegetation detected".
+- Surfaced `stress_indicators`/`vigor_indicators` under a new "What this suggests" section - the backend has always computed these plain-language findings (e.g. "Low NDRE - possible nitrogen/chlorophyll deficiency"), the mobile model just never parsed them.
+- NDVI itself is now shown de-emphasized (small, gray, relabeled "Vegetation index (NDVI)") rather than as the headline number.
+
+Verified live on-device against the same real maize photo: caveat banner renders, summary reads "No live vegetation detected, moderate canopy vigor" instead of a bare "dead", and the stress/vigor indicators list renders correctly on both the capture-result card and the flight detail screen's summary/per-image list.
+
+**Next up:** farm input tracking (purchases/costs + application events) and simple yield tracking (manual entry, no predictive modeling yet - deferred until real yield data exists to model from). After that: the proximity/friend-request social layer that sits on top of the now-real chama system.

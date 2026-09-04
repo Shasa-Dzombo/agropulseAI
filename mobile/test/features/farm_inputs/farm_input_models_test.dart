@@ -51,16 +51,30 @@ void main() {
       'id': 1, 'farm_id': 804, 'crop': 'Maize', 'season_label': '2026 long rains',
       'planted_date': '2026-03-15', 'expected_yield_kg': 1800.0, 'actual_yield_kg': null,
       'harvest_date': null, 'notes': null, 'created_at': '2026-09-04T10:40:21.034511Z',
+      'estimated_yield_kg': 5055.0,
+      'estimate_source': 'KNBS National Agriculture Production Report 2024 (national average, not county-adjusted)',
     });
     expect(planted.actualYieldKg, isNull);
+    expect(planted.estimatedYieldKg, closeTo(5055.0, 0.01));
 
     final harvested = FarmYieldRecord.fromJson({
       'id': 1, 'farm_id': 804, 'crop': 'Maize', 'season_label': '2026 long rains',
       'planted_date': '2026-03-15', 'expected_yield_kg': 1800.0, 'actual_yield_kg': 1650.0,
       'harvest_date': '2026-08-20', 'notes': 'Slightly below expected due to dry spell in July',
-      'created_at': '2026-09-04T10:40:21.034511Z',
+      'created_at': '2026-09-04T10:40:21.034511Z', 'estimated_yield_kg': 5055.0,
+      'estimate_source': 'KNBS National Agriculture Production Report 2024 (national average, not county-adjusted)',
     });
     expect(harvested.actualYieldKg, closeTo(1650.0, 0.01));
     expect(harvested.harvestDate, DateTime(2026, 8, 20));
+  });
+
+  test('FarmYieldRecord.fromJson leaves estimate null for a crop with no reference data', () {
+    final record = FarmYieldRecord.fromJson({
+      'id': 4, 'farm_id': 804, 'crop': 'Avocado', 'season_label': 'test', 'planted_date': null,
+      'expected_yield_kg': null, 'actual_yield_kg': null, 'harvest_date': null, 'notes': null,
+      'created_at': '2026-09-04T13:13:23.956807Z', 'estimated_yield_kg': null, 'estimate_source': null,
+    });
+    expect(record.estimatedYieldKg, isNull);
+    expect(record.estimateSource, isNull);
   });
 }

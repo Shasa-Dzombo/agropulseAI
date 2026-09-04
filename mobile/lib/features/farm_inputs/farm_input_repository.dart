@@ -77,4 +77,9 @@ class FarmInputRepository {
     });
     return FarmYieldRecord.fromJson(json as Map<String, dynamic>);
   }
+
+  Future<List<String>> getYieldTips(int farmId, int recordId) async {
+    final json = await _api.get('/farms/$farmId/yields/$recordId/tips', auth: true);
+    return (json as List).cast<String>();
+  }
 }

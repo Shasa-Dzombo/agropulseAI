@@ -62,6 +62,12 @@ class FarmYieldRecord {
   final double? actualYieldKg;
   final DateTime? harvestDate;
   final String? notes;
+  // Computed server-side from app.services.yield_estimation - a real
+  // national-average reference multiplied by farm size, not a prediction.
+  // Null when the crop isn't in the reference table yet (only maize/beans
+  // today) - never a guessed number.
+  final double? estimatedYieldKg;
+  final String? estimateSource;
 
   FarmYieldRecord({
     required this.id,
@@ -73,6 +79,8 @@ class FarmYieldRecord {
     required this.actualYieldKg,
     required this.harvestDate,
     required this.notes,
+    required this.estimatedYieldKg,
+    required this.estimateSource,
   });
 
   factory FarmYieldRecord.fromJson(Map<String, dynamic> json) => FarmYieldRecord(
@@ -85,5 +93,7 @@ class FarmYieldRecord {
         actualYieldKg: (json['actual_yield_kg'] as num?)?.toDouble(),
         harvestDate: json['harvest_date'] == null ? null : DateTime.parse(json['harvest_date'] as String),
         notes: json['notes'] as String?,
+        estimatedYieldKg: (json['estimated_yield_kg'] as num?)?.toDouble(),
+        estimateSource: json['estimate_source'] as String?,
       );
 }

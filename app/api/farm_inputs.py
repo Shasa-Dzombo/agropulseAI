@@ -15,6 +15,7 @@ Same access-control pattern as app/services/drone_ai_service.py: every
 record is scoped to a farm the caller owns.
 """
 
+import asyncio
 from decimal import Decimal
 from typing import List, Optional
 
@@ -30,6 +31,8 @@ from app.schemas.farm_input import (
     FarmYieldListResponse, FarmYieldRecordCreateRequest, FarmYieldRecordResponse,
     FarmYieldRecordUpdateRequest,
 )
+from app.services.weather_service import get_openweather_client, fetch_weather_snapshot
+from app.services.yield_estimation import estimate_yield_kg
 
 router = APIRouter(prefix="/farms/{farm_id}", tags=["Farm Inputs & Yield"])
 
@@ -41,6 +44,18 @@ def _get_owned_farm_or_raise(db: Session, farm_id: int, user_id: int) -> Farm:
     if farm is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found or you don't have permission")
     return farm
+
+
+def _to_yield_response(record: FarmYieldRecord, farm: Farm) -> FarmYieldRecordResponse:
+    estimate = estimate_yield_kg(record.crop, farm.size_acres)
+    return FarmYieldRecordResponse(
+        id=record.id, farm_id=record.farm_id, crop=record.crop, season_label=record.season_label,
+        planted_date=record.planted_date, expected_yield_kg=record.expected_yield_kg,
+        actual_yield_kg=record.actual_yield_kg, harvest_date=record.harvest_date, notes=record.notes,
+        created_at=record.created_at,
+        estimated_yield_kg=estimate.estimated_yield_kg if estimate else None,
+        estimate_source=estimate.source if estimate else None,
+    )
 
 
 # ============================================================================
@@ -119,7 +134,7 @@ async def create_yield_record(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency),
 ):
-    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    farm = _get_owned_farm_or_raise(db, farm_id, current_user["id"])
     record = FarmYieldRecord(
         farm_id=farm_id,
         created_by_id=current_user["id"],
@@ -131,7 +146,7 @@ async def create_yield_record(
     db.add(record)
     db.commit()
     db.refresh(record)
-    return record
+    return _to_yield_response(record, farm)
 
 
 @router.get("/yields", response_model=FarmYieldListResponse)
@@ -140,13 +155,13 @@ async def list_yield_records(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency),
 ):
-    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    farm = _get_owned_farm_or_raise(db, farm_id, current_user["id"])
     records = db.execute(
         select(FarmYieldRecord)
         .where(FarmYieldRecord.farm_id == farm_id, FarmYieldRecord.is_deleted == False)  # noqa: E712
         .order_by(FarmYieldRecord.planted_date.desc().nulls_last())
     ).scalars().all()
-    return FarmYieldListResponse(items=records)
+    return FarmYieldListResponse(items=[_to_yield_response(r, farm) for r in records])
 
 
 @router.patch("/yields/{record_id}", response_model=FarmYieldRecordResponse)
@@ -159,7 +174,7 @@ async def update_yield_record(
 ):
     """Records the actual harvest against an existing (expected-only) yield
     record - the common second step after planting."""
-    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    farm = _get_owned_farm_or_raise(db, farm_id, current_user["id"])
     record = db.execute(
         select(FarmYieldRecord).where(FarmYieldRecord.id == record_id, FarmYieldRecord.farm_id == farm_id)
     ).scalar_one_or_none()
@@ -175,4 +190,64 @@ async def update_yield_record(
 
     db.commit()
     db.refresh(record)
-    return record
+    return _to_yield_response(record, farm)
+
+
+@router.get("/yields/{record_id}/tips", response_model=List[str])
+async def get_yield_tips(
+    farm_id: int,
+    record_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Short, real, farmer-legible tips for this yield record - not
+    generated from the yield estimate itself (that's just a reference-yield
+    multiplication, it has no opinion). Two real sources, both already used
+    elsewhere in this app:
+
+    1. Current agricultural alerts (frost/heat/drought/flood/wind) from
+       app.services.weather_service - the same ones GET /farms/{id}/weather
+       already surfaces, just filtered to their recommendations.
+    2. One rule over this farm's own input log: no fertilizer application
+       logged since planting yet.
+
+    No weather-season modelling, no ML - see app.services.yield_estimation
+    for why that's deliberately out of scope for now.
+    """
+    farm = _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    record = db.execute(
+        select(FarmYieldRecord).where(FarmYieldRecord.id == record_id, FarmYieldRecord.farm_id == farm_id)
+    ).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Yield record not found")
+
+    tips: List[str] = []
+
+    client = get_openweather_client()
+    if client is not None:
+        weather = await fetch_weather_snapshot(client, farm.latitude, farm.longitude)
+        if weather is not None:
+            forecast = await asyncio.to_thread(client.get_5day_forecast, farm.latitude, farm.longitude)
+            alerts = await asyncio.to_thread(client.get_agricultural_alerts, farm.latitude, farm.longitude, weather, forecast)
+            for alert in alerts:
+                if alert.recommendations:
+                    tips.append(f"{alert.description} {alert.recommendations[0]}")
+
+    since = record.planted_date
+    if since is None and record.created_at is not None:
+        since = record.created_at.date()
+    fertilized = False
+    if since is not None:
+        fertilized = db.execute(
+            select(FarmInputRecord.id).where(
+                FarmInputRecord.farm_id == farm_id,
+                FarmInputRecord.is_deleted == False,  # noqa: E712
+                FarmInputRecord.category == "fertilizer",
+                FarmInputRecord.entry_type == "application",
+                FarmInputRecord.entry_date >= since,
+            )
+        ).first() is not None
+    if not fertilized and record.crop.strip().lower() == "maize":
+        tips.append("No fertilizer application logged yet this season - maize typically benefits from a nitrogen top-dress around 4-6 weeks after planting.")
+
+    return tips

@@ -65,6 +65,12 @@ class FarmYieldRecordResponse(BaseModel):
     harvest_date: Optional[date] = None
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
+    # Computed at read time from app.services.yield_estimation - never
+    # persisted, so it always reflects the current reference data and the
+    # farm's current size_acres. None when the crop isn't in the reference
+    # table yet (see that module) - never a guessed number.
+    estimated_yield_kg: Optional[float] = None
+    estimate_source: Optional[str] = None
 
     class Config:
         from_attributes = True

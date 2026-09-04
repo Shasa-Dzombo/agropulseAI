@@ -222,30 +222,80 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              for (final record in records)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${record.crop} · ${record.seasonLabel}', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 4),
-                        if (record.expectedYieldKg != null) Text('Expected: ${record.expectedYieldKg!.toStringAsFixed(0)} kg'),
-                        if (record.actualYieldKg != null)
-                          Text('Actual: ${record.actualYieldKg!.toStringAsFixed(0)} kg', style: const TextStyle(fontWeight: FontWeight.bold))
-                        else
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: OutlinedButton(onPressed: () => _recordHarvest(record), child: const Text('Record harvest')),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
+              for (final record in records) _YieldCard(farmId: widget.farmId, record: record, onRecordHarvest: () => _recordHarvest(record)),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _YieldCard extends StatefulWidget {
+  final int farmId;
+  final FarmYieldRecord record;
+  final VoidCallback onRecordHarvest;
+
+  const _YieldCard({required this.farmId, required this.record, required this.onRecordHarvest});
+
+  @override
+  State<_YieldCard> createState() => _YieldCardState();
+}
+
+class _YieldCardState extends State<_YieldCard> {
+  late Future<List<String>> _tipsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _tipsFuture = FarmInputRepository.instance.getYieldTips(widget.farmId, widget.record.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final record = widget.record;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${record.crop} · ${record.seasonLabel}', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            if (record.expectedYieldKg != null) Text('Expected: ${record.expectedYieldKg!.toStringAsFixed(0)} kg'),
+            if (record.actualYieldKg != null)
+              Text('Actual: ${record.actualYieldKg!.toStringAsFixed(0)} kg', style: const TextStyle(fontWeight: FontWeight.bold))
+            else
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton(onPressed: widget.onRecordHarvest, child: const Text('Record harvest')),
+              ),
+            if (record.estimatedYieldKg != null) ...[
+              const SizedBox(height: 8),
+              Text('Estimated: ${record.estimatedYieldKg!.toStringAsFixed(0)} kg', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+              Text(record.estimateSource!, style: const TextStyle(color: Colors.black38, fontSize: 11)),
+            ],
+            FutureBuilder<List<String>>(
+              future: _tipsFuture,
+              builder: (context, snapshot) {
+                final tips = snapshot.data;
+                if (tips == null || tips.isEmpty) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Tips', style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 4),
+                      for (final tip in tips)
+                        Padding(padding: const EdgeInsets.only(top: 4), child: Text('• $tip')),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

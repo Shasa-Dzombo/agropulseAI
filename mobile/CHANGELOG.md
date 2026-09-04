@@ -238,3 +238,18 @@ This closes out drone phase 3 completely - flight list/create/detail and photo c
 Verified live on-device against the same real maize photo: caveat banner renders, summary reads "No live vegetation detected, moderate canopy vigor" instead of a bare "dead", and the stress/vigor indicators list renders correctly on both the capture-result card and the flight detail screen's summary/per-image list.
 
 **Next up:** farm input tracking (purchases/costs + application events) and simple yield tracking (manual entry, no predictive modeling yet - deferred until real yield data exists to model from). After that: the proximity/friend-request social layer that sits on top of the now-real chama system.
+
+## 2026-09-04 (cont'd) — Farm input log + yield tracking (backend + mobile)
+
+Scope was set directly by the user: purchases/costs and application events for input tracking ("whatever a farmer would actually want to follow up on through the season"), and yield tracking kept deliberately simple - a manual expected/actual record, no predictive modeling, since there's no real historical yield data yet to model from and modeling off the drone NDVI pipeline would just inherit that pipeline's own accuracy caveats (see the entry above).
+
+**Backend** (`app/models/database.py`, `app/schemas/farm_input.py`, `app/api/farm_inputs.py`, new tables via `scripts/patch_farm_inputs_tables.py`):
+- `FarmInputRecord` - one model for both purchases and applications (`entry_type`), not two separate systems: a farmer thinks of this as one running timeline of "what did I buy and what did I put on the field." Deliberately not built on the pre-existing `Treatment`/`TreatmentApplication`/`Product`/`Supplier` cluster already in `database.py` - audited it first and found it's disease-diagnosis-scoped, not farm-scoped, and `app.api.products` isn't even wired into `main.py` (dead, same pattern as the old chama implementations).
+- `FarmYieldRecord` - crop, season label, planted date, expected/actual yield, harvest date.
+- New router `app/api/farm_inputs.py`, farm-ownership-scoped the same way `drone_ai_service.py` scopes flights (`Farm.owner_id == user_id`, 404 otherwise) - verified live via curl including the access-control boundary (a farm you don't own 404s, not 403 - consistent with the drone endpoints).
+
+**Mobile** (`mobile/lib/features/farm_inputs/`): `FarmInputsScreen` (tabbed: Input log / Yield) reached via a new "Inputs & yield" button on `FarmDetailScreen`. Input log: bought/applied toggle, category, item, quantity/unit, cost (purchase only), date, notes, swipe-to-delete. Yield: start a season record with expected yield, "Record harvest" button opens a small dialog for actual yield + harvest date once ready. `ApiClient` gained `patch`/`delete` methods (previously only GET/POST existed).
+
+**Real bug found and fixed while verifying on-device:** the Yield tab crashed with "Could not load yield records" - the backend wraps yields in `{"items": [...]}` (`FarmYieldListResponse`) but the Dart repository was parsing the response as a bare array. Caught by actually loading the tab on-device, not by the unit tests (those tested `FarmYieldRecord.fromJson` directly, not the list-unwrapping logic) - worth remembering that model-parsing tests don't cover repository-level response-shape bugs.
+
+Verified live end-to-end on-device: logged a real purchase and a real application entry (both showed correctly with plain-language labels after a fresh screen load - immediately-after-save renders were briefly stale once, a `setState` timing artifact, not a data bug), started a yield record, and recorded a harvest against it, confirming the Expected/Actual comparison renders correctly.

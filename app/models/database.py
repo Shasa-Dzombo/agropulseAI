@@ -2180,6 +2180,71 @@ class AuditLog(Base, TimestampMixin):
     )
 
 
+class FarmInputRecord(Base, TimestampMixin, SoftDeleteMixin):
+    """A single entry in a farm's input log for a planting season.
+
+    Deliberately one model, not separate purchase/inventory/application
+    tables: a farmer thinks of this as one running timeline of "what did I
+    buy and what did I put on the field", not as separate systems. Unlike
+    the pre-existing Treatment/TreatmentApplication/Product/Supplier
+    cluster above (which is disease-diagnosis-scoped and not wired into
+    any live API - see main.py, app.api.products isn't registered), this
+    is farm-scoped and independent of any diagnosis."""
+    __tablename__ = 'farm_input_records'
+
+    id = Column(Integer, primary_key=True)
+    farm_id = Column(Integer, ForeignKey('farms.id', ondelete='CASCADE'), nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    # 'purchase' or 'application' - see app.schemas.farm_input for the enum
+    entry_type = Column(String(20), nullable=False, index=True)
+    # seed, fertilizer, pesticide, labor, other
+    category = Column(String(20), nullable=False)
+    item_name = Column(String(200), nullable=False)
+    quantity = Column(Float, nullable=True)
+    unit = Column(String(50), nullable=True)  # kg, bags, litres, hours, etc.
+
+    # Purchase-specific; null for application entries
+    cost_ksh = Column(DECIMAL(10, 2), nullable=True)
+
+    notes = Column(Text, nullable=True)
+    entry_date = Column(Date, nullable=False, index=True)
+
+    farm = relationship("Farm", backref="input_records")
+
+    __table_args__ = (
+        Index('idx_farm_input_farm_date', 'farm_id', 'entry_date'),
+    )
+
+
+class FarmYieldRecord(Base, TimestampMixin, SoftDeleteMixin):
+    """Per-farm/season yield tracking - expected yield recorded at planting,
+    actual recorded at harvest, plain comparison. Deliberately no predictive
+    modeling in v1: there's no real historical yield data yet to model
+    from, and modeling off the drone NDVI pipeline specifically would
+    inherit that pipeline's own accuracy caveats (see DroneImage.hasRealNir
+    in the mobile app) - a manual record is the honest starting point."""
+    __tablename__ = 'farm_yield_records'
+
+    id = Column(Integer, primary_key=True)
+    farm_id = Column(Integer, ForeignKey('farms.id', ondelete='CASCADE'), nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    crop = Column(String(100), nullable=False)
+    season_label = Column(String(50), nullable=False)  # e.g. "2026 long rains"
+    planted_date = Column(Date, nullable=True)
+    expected_yield_kg = Column(Float, nullable=True)
+    actual_yield_kg = Column(Float, nullable=True)
+    harvest_date = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    farm = relationship("Farm", backref="yield_records")
+
+    __table_args__ = (
+        Index('idx_farm_yield_farm_season', 'farm_id', 'season_label'),
+    )
+
+
 # ============================================================================
 # HELPER FUNCTIONS AND UTILITIES
 # ============================================================================
@@ -2205,5 +2270,6 @@ __all__ = [
     'IoTDevice', 'SensorReading', 'WeatherRecord', 'SoilTest',
     'Alert', 'Notification',
     'AuditLog',
+    'FarmInputRecord', 'FarmYieldRecord',
     'init_database', 'drop_all_tables'
 ]

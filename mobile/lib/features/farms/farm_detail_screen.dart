@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
 import '../drones/drone_flight_list_screen.dart';
+import '../farm_inputs/farm_inputs_screen.dart';
 import 'farm_models.dart';
 import 'farm_repository.dart';
 import 'farm_satellite_map.dart';
@@ -88,6 +89,14 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
               )),
               icon: const Icon(Icons.flight_takeoff),
               label: const Text('Drone flights'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => FarmInputsScreen(farmId: farm.id),
+              )),
+              icon: const Icon(Icons.receipt_long),
+              label: const Text('Inputs & yield'),
             ),
             const SizedBox(height: 16),
             Text('Satellite view', style: Theme.of(context).textTheme.titleMedium),

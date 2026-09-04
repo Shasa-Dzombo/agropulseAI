@@ -39,6 +39,12 @@ class ApiClient {
   Future<dynamic> post(String path, {Map<String, dynamic>? body, bool auth = false, Map<String, dynamic>? query}) =>
       _send('POST', path, body: body, auth: auth, query: query);
 
+  Future<dynamic> patch(String path, {Map<String, dynamic>? body, bool auth = false, Map<String, dynamic>? query}) =>
+      _send('PATCH', path, body: body, auth: auth, query: query);
+
+  Future<dynamic> delete(String path, {bool auth = false, Map<String, dynamic>? query}) =>
+      _send('DELETE', path, auth: auth, query: query);
+
   /// Multipart file upload (e.g. POST /diagnoses/upload-image). Kept separate
   /// from [_send] - multipart requests don't share its JSON-body shape - but
   /// mirrors its auth-header and refresh-on-401 handling.
@@ -103,6 +109,8 @@ class ApiClient {
       response = switch (method) {
         'GET' => await http.get(uri, headers: headers),
         'POST' => await http.post(uri, headers: headers, body: encodedBody),
+        'PATCH' => await http.patch(uri, headers: headers, body: encodedBody),
+        'DELETE' => await http.delete(uri, headers: headers),
         _ => throw UnsupportedError('Unsupported method $method'),
       };
     } catch (e) {

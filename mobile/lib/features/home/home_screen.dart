@@ -6,6 +6,7 @@ import '../../features/auth/login_screen.dart';
 import '../../features/farms/farm_list_screen.dart';
 import '../../features/diagnosis/diagnosis_upload_screen.dart';
 import '../../features/chama/chama_list_screen.dart';
+import '../../features/friends/friends_screen.dart';
 
 /// Landing screen post-login. More farmer flows come next.
 class HomeScreen extends StatelessWidget {
@@ -56,6 +57,12 @@ class HomeScreen extends StatelessWidget {
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChamaListScreen())),
               icon: const Icon(Icons.groups),
               label: const Text('Chamas'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FriendsScreen())),
+              icon: const Icon(Icons.people_outline),
+              label: const Text('Farmers near you'),
             ),
           ],
         ),

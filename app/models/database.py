@@ -494,6 +494,30 @@ class User(Base, TimestampMixin, SoftDeleteMixin, GeoLocationMixin):
         self.profile_completion_percentage = (completed / len(fields)) * 100
 
 
+class FriendRequest(Base, TimestampMixin):
+    """Symmetric friend connection between two users - see app/api/friends.py.
+
+    A row with status='pending' is a one-directional request awaiting the
+    recipient's answer; 'accepted' means both directions are now friends (no
+    second row is created for the reverse direction - the pair is the
+    friendship, direction just records who asked first). Rejecting a request
+    deletes the row rather than marking it 'rejected', same non-punitive
+    pattern as chama join-request rejection (app/api/chamas.py) - it allows a
+    later re-request instead of a permanent block.
+    """
+    __tablename__ = 'friend_requests'
+
+    id = Column(Integer, primary_key=True)
+    requester_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    recipient_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    status = Column(String(20), default='pending', nullable=False)  # 'pending' | 'accepted'
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('requester_id', 'recipient_id', name='uq_friend_request_pair'),
+    )
+
+
 class UserSession(Base, TimestampMixin):
     """Track user sessions for security and analytics."""
     __tablename__ = 'user_sessions'

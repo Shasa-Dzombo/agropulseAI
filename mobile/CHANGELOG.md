@@ -265,3 +265,18 @@ User asked what a genuine predictive yield would take. Answer: either (a) a form
 **Tips** (`GET /farms/{id}/yields/{id}/tips`): no new subsystem - reuses the same `get_agricultural_alerts()` already powering `GET /farms/{id}/weather` (frost/heat/drought/flood/wind, filtered to their recommendations), plus one rule over the new input log (no fertilizer application logged since planting, for maize).
 
 Mobile: `FarmYieldRecord` gained `estimatedYieldKg`/`estimateSource`; yield cards show the estimate (with its source, greyed out to read as reference info, not a promise) and a `Tips` section that lazy-loads per card. Verified live on-device: maize/beans show real computed estimates, an unsupported test crop ("Avocado") correctly shows no estimate at all, and the fertilizer-gap tip fired correctly for the maize record with no fertilizer application logged.
+
+## 2026-09-05 — Chama social layer: friend requests + county discovery
+
+Scope narrowed down with the user before building anything: purpose is specifically to help a farmer discover a chama worth joining (not a vouching layer feeding chama approval, not a general social network with messaging) - "proximity" means same county (`User.county`, already real and populated), not GPS - and connections are symmetric friend requests (send, other side accepts/rejects, then both are equally "friends").
+
+**Backend** (`app/models/database.py`'s new `FriendRequest`, `app/schemas/friend.py`, `app/api/friends.py`, migrated via `scripts/patch_friend_requests_table.py`):
+- `GET /users/nearby` - other users in the caller's own county, each flagged `is_friend`/`request_pending` and listing their `public_chamas` (only `is_public=True` chamas, same visibility rule the chama browse endpoint already uses) - this is the actual discovery mechanism.
+- `POST /friends/requests`, `GET /friends/requests` (incoming), `.../accept`, `.../reject` (deletes the row - same non-punitive re-request pattern as chama join-request rejection), `GET /friends`.
+- A mutual-request edge case handled explicitly: if both people request each other before either answers, the second request auto-accepts the first rather than creating two dangling pending rows.
+
+Verified live end-to-end via curl with three real registered test accounts (not just unit tests, given the pairwise logic involved): discovery, send, accept, reject-then-re-request, and the mutual-auto-accept path all behaved correctly.
+
+**Mobile** (`mobile/lib/features/friends/`): `FriendsScreen` (tabbed: Nearby / Requests / Friends), a "Farmers near you" entry point on the home screen. Nearby tab shows each farmer's public chamas inline as the discovery signal.
+
+**Not yet verified on-device** - the emulator hit a full System UI freeze (worse than the usual per-app ANR seen earlier this session) right as this feature was being tested, and didn't clear after waiting, stopping the Gradle daemon, force-stopping System UI, or a full emulator restart. Free RAM was sitting around 2-3GB through all of it despite freeing what's controllable from this side. Paused at the user's request rather than continuing to cycle restarts - resume with a fresh on-device pass next session (or consider testing on a real device instead, now that `--dart-define=API_BASE_URL` is proven wired up).

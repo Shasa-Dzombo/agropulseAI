@@ -113,6 +113,75 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
     }
   }
 
+  Future<void> _editYield(FarmYieldRecord record) async {
+    final cropController = TextEditingController(text: record.crop);
+    final seasonController = TextEditingController(text: record.seasonLabel);
+    final expectedController = TextEditingController(text: record.expectedYieldKg?.toStringAsFixed(0) ?? '');
+    DateTime? plantedDate = record.plantedDate;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit yield record'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: cropController, decoration: const InputDecoration(labelText: 'Crop')),
+                const SizedBox(height: 12),
+                TextField(controller: seasonController, decoration: const InputDecoration(labelText: 'Season')),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: expectedController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'Expected yield, kg'),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Planted date'),
+                  subtitle: Text(plantedDate == null
+                      ? 'Not set'
+                      : '${plantedDate!.year}-${plantedDate!.month.toString().padLeft(2, '0')}-${plantedDate!.day.toString().padLeft(2, '0')}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: plantedDate ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now().add(const Duration(days: 1)),
+                    );
+                    if (picked != null) setDialogState(() => plantedDate = picked);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+
+    if (result != true) return;
+    final expected = double.tryParse(expectedController.text.trim());
+    try {
+      await FarmInputRepository.instance.editYieldRecord(
+        widget.farmId, record.id,
+        crop: cropController.text.trim().isEmpty ? null : cropController.text.trim(),
+        seasonLabel: seasonController.text.trim().isEmpty ? null : seasonController.text.trim(),
+        plantedDate: plantedDate,
+        expectedYieldKg: expected,
+      );
+      setState(_loadYields);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -222,7 +291,13 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              for (final record in records) _YieldCard(farmId: widget.farmId, record: record, onRecordHarvest: () => _recordHarvest(record)),
+              for (final record in records)
+                _YieldCard(
+                  farmId: widget.farmId,
+                  record: record,
+                  onRecordHarvest: () => _recordHarvest(record),
+                  onEdit: () => _editYield(record),
+                ),
             ],
           );
         },
@@ -235,8 +310,9 @@ class _YieldCard extends StatefulWidget {
   final int farmId;
   final FarmYieldRecord record;
   final VoidCallback onRecordHarvest;
+  final VoidCallback onEdit;
 
-  const _YieldCard({required this.farmId, required this.record, required this.onRecordHarvest});
+  const _YieldCard({required this.farmId, required this.record, required this.onRecordHarvest, required this.onEdit});
 
   @override
   State<_YieldCard> createState() => _YieldCardState();
@@ -260,7 +336,12 @@ class _YieldCardState extends State<_YieldCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${record.crop} · ${record.seasonLabel}', style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              children: [
+                Expanded(child: Text('${record.crop} · ${record.seasonLabel}', style: Theme.of(context).textTheme.titleMedium)),
+                IconButton(icon: const Icon(Icons.edit_outlined, size: 20), onPressed: widget.onEdit),
+              ],
+            ),
             const SizedBox(height: 4),
             if (record.expectedYieldKg != null) Text('Expected: ${record.expectedYieldKg!.toStringAsFixed(0)} kg'),
             if (record.actualYieldKg != null)

@@ -32,7 +32,7 @@ from app.schemas.farm_input import (
     FarmYieldRecordUpdateRequest,
 )
 from app.services.weather_service import get_openweather_client, fetch_weather_snapshot
-from app.services.yield_estimation import estimate_yield_kg
+from app.services.yield_estimation import estimate_yield_kg, kalro_variety_tip
 
 router = APIRouter(prefix="/farms/{farm_id}", tags=["Farm Inputs & Yield"])
 
@@ -172,8 +172,8 @@ async def update_yield_record(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency),
 ):
-    """Records the actual harvest against an existing (expected-only) yield
-    record - the common second step after planting."""
+    """Partial update - covers both recording the actual harvest against an
+    existing (expected-only) record and correcting any other field of it."""
     farm = _get_owned_farm_or_raise(db, farm_id, current_user["id"])
     record = db.execute(
         select(FarmYieldRecord).where(FarmYieldRecord.id == record_id, FarmYieldRecord.farm_id == farm_id)
@@ -181,6 +181,14 @@ async def update_yield_record(
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Yield record not found")
 
+    if request.crop is not None:
+        record.crop = request.crop
+    if request.season_label is not None:
+        record.season_label = request.season_label
+    if request.planted_date is not None:
+        record.planted_date = request.planted_date
+    if request.expected_yield_kg is not None:
+        record.expected_yield_kg = request.expected_yield_kg
     if request.actual_yield_kg is not None:
         record.actual_yield_kg = request.actual_yield_kg
     if request.harvest_date is not None:
@@ -202,14 +210,17 @@ async def get_yield_tips(
 ):
     """Short, real, farmer-legible tips for this yield record - not
     generated from the yield estimate itself (that's just a reference-yield
-    multiplication, it has no opinion). Two real sources, both already used
-    elsewhere in this app:
+    multiplication, it has no opinion). Three real sources:
 
     1. Current agricultural alerts (frost/heat/drought/flood/wind) from
        app.services.weather_service - the same ones GET /farms/{id}/weather
        already surfaces, just filtered to their recommendations.
     2. One rule over this farm's own input log: no fertilizer application
        logged since planting yet.
+    3. A KALRO improved-variety tip (app.services.yield_estimation.
+       kalro_variety_tip) - real trial figures for named varieties, framed
+       as "under good management", never folded into the estimate itself
+       since it's a potential yield, not a realized average.
 
     No weather-season modelling, no ML - see app.services.yield_estimation
     for why that's deliberately out of scope for now.
@@ -249,5 +260,9 @@ async def get_yield_tips(
         ).first() is not None
     if not fertilized and record.crop.strip().lower() == "maize":
         tips.append("No fertilizer application logged yet this season - maize typically benefits from a nitrogen top-dress around 4-6 weeks after planting.")
+
+    variety_tip = kalro_variety_tip(record.crop)
+    if variety_tip:
+        tips.append(variety_tip)
 
     return tips

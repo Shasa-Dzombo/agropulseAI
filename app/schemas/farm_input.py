@@ -47,8 +47,14 @@ class FarmYieldRecordCreateRequest(BaseModel):
 
 
 class FarmYieldRecordUpdateRequest(BaseModel):
-    """Recording the actual harvest against an existing (expected-only)
-    yield record - the common second step after planting."""
+    """Partial update - covers both recording the actual harvest against an
+    existing (expected-only) record and correcting any field of it (a typo
+    in the crop name, a re-estimated expected yield, etc). Every field is
+    optional; only the ones supplied are changed."""
+    crop: Optional[str] = Field(None, min_length=1, max_length=100)
+    season_label: Optional[str] = Field(None, min_length=1, max_length=50)
+    planted_date: Optional[date] = None
+    expected_yield_kg: Optional[float] = Field(None, gt=0)
     actual_yield_kg: Optional[float] = Field(None, gt=0)
     harvest_date: Optional[date] = None
     notes: Optional[str] = None

@@ -280,3 +280,30 @@ Verified live end-to-end via curl with three real registered test accounts (not 
 **Mobile** (`mobile/lib/features/friends/`): `FriendsScreen` (tabbed: Nearby / Requests / Friends), a "Farmers near you" entry point on the home screen. Nearby tab shows each farmer's public chamas inline as the discovery signal.
 
 **Not yet verified on-device** - the emulator hit a full System UI freeze (worse than the usual per-app ANR seen earlier this session) right as this feature was being tested, and didn't clear after waiting, stopping the Gradle daemon, force-stopping System UI, or a full emulator restart. Free RAM was sitting around 2-3GB through all of it despite freeing what's controllable from this side. Paused at the user's request rather than continuing to cycle restarts - resume with a fresh on-device pass next session (or consider testing on a real device instead, now that `--dart-define=API_BASE_URL` is proven wired up).
+
+## 2026-09-06 — Real device testing (Infinix X6531), plus fixes from what it found
+
+First real-phone session, not just the emulator - connected over USB with `flutter run -d <device> --dart-define=API_BASE_URL=http://<lan-ip>:8030/api/v1`, backend reachable over WiFi LAN. Real-device testing surfaced several things the emulator never would have:
+
+**Security: self-registration could grant admin.** `RegisterRequest.role` accepted `"admin"` directly with zero verification - anyone could `POST /auth/register` with `"role": "admin"` and get an admin-flagged account. Fixed: pattern now only allows `farmer`/`agronomist`; granting admin has no endpoint at all yet, so it's DB-only until a real promotion flow exists (deliberately not built tonight - no admin capabilities are defined yet either, see below).
+
+**Farm delete now cascades for real.** User's call: deleting a farm should remove its drone flights, input log, and yield records too, not leave them orphaned. Input/yield records (real `SoftDeleteMixin` support) are soft-deleted; drone flights have no soft-delete concept so they're hard-deleted, which cascades to their images/analyses automatically via each table's own `ondelete="CASCADE"` FK - no separate cleanup needed there. Verified live: created a farm with one of each, deleted it, confirmed all three gone via API and a direct DB check.
+
+**Farm edit, yield edit, and general farm delete UI** landed (mobile: delete button + confirmation dialog on `FarmDetailScreen`, list refreshes on return; yield cards gained an edit pencil alongside "Record harvest").
+
+**Drone flight completion bug, partially diagnosed.** User reported flights not registering as complete without switching screens and retrying. Backend logs plus a direct DB check confirmed this is real, not a display bug - two test flights sat `IN_PROGRESS` server-side with zero log entry for a `/complete` call, meaning the request never left the phone the first time. Best-supported theory: real-device WiFi-to-LAN connectivity flakiness on a request after the connection sits idle (switching screens makes a fresh call that "wakes" it), not an app defect - not yet confirmed with the user whether an error was visible on the failed attempt. **Unresolved - pick up next session.**
+
+**Drone metrics explainer added.** An info button next to "Analysis summary" opens a plain-language explanation of NDVI/NDRE/canopy coverage/vigor, including the same "estimated from an ordinary photo" caveat as the result screen - the numbers were honest but still jargon; this makes them legible without leaving the screen.
+
+**Friends: "can't see the request I sent" - real gap, now fixed.** `GET /friends/requests` only ever listed *incoming* requests; there was no way to see your own outgoing ones. Added `GET /friends/requests/sent` + a repository method + a 4th "Sent" tab on `FriendsScreen`, and generalized `reject` so either side of a pending request can remove it (recipient declining, or sender cancelling) rather than only the recipient. Verified live via curl: send, see it in `/sent`, cancel it, confirmed gone.
+
+**Full CRUD-completeness audit run across the app** (Farms, Chamas, Drone flights, Farm inputs/yield, Friends, Diagnosis, User profile) after the pattern of "backend endpoint exists but nothing calls it" kept recurring. Biggest finding: **`app/api/users.py` has real, complete profile-edit/avatar-upload/delete endpoints that have never been mounted in `main.py`** - same dead-router pattern as the old chama/products code, just never caught until now. Full gap list (not yet built, prioritized for next session):
+- **Profiles (severe)**: mount the `users` router; build an edit-profile mobile screen. Nothing exists end-to-end today.
+- **Chamas**: no edit-chama, no leave-chama, no remove-member, no delete - backend gap.
+- **Drone flights**: no edit/delete flight, no delete-image - backend gap.
+- **Farm inputs/yield**: input records can be deleted but not edited; yield records can't be deleted at all.
+- **Friends**: no unfriend; no expanded profile view when tapping a person.
+- **Diagnosis**: `listDiagnoses()` is fully built and wired into the repository but never called from any screen - there's no history view, only "diagnose -> see this one result."
+- **Farms**: edit endpoint exists server-side but has no mobile repository method or screen; list isn't swipe-to-delete like inputs is.
+
+**Two design mockups produced** (Claude Design canvas, not real functionality yet): an honest diagnosis-result redesign - PictureThis-inspired nature palette, but fixing PictureThis's actual flaw (confidence and alternative diagnoses hidden) by showing both plainly - and a drone flight-boundary planner concept (traced polygon, vertex handles, animated lawnmower scan path). Both purely illustrative; neither is wired to real data or real map tiles.

@@ -31,9 +31,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 
+from sqlalchemy import select
+
 from app.db_config import get_production_db_dependency
 from app.repositories.farm import FarmRepository
 from app.api.auth import get_current_user
+from app.models.database import FarmInputRecord, FarmYieldRecord
+from app.models.drone import DroneFlight
 from app.schemas.drone import WeatherSnapshotOut, DiseasePressureOut, AgriculturalAlertOut
 from app.services.weather_service import get_openweather_client, fetch_weather_snapshot, assess_disease_pressure
 
@@ -584,9 +588,22 @@ async def delete_farm(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required for permanent deletion"
         )
-    
+
+    # Deleting a farm deletes everything scoped to it - a farm you've
+    # removed shouldn't leave orphaned flights/inputs/yields behind. Input
+    # and yield records have real soft-delete support (SoftDeleteMixin);
+    # drone flights don't, so those are hard-deleted - their images and
+    # analyses cascade automatically via each table's own
+    # ondelete="CASCADE" FK (see app/models/drone.py).
+    for record in db.execute(select(FarmInputRecord).where(FarmInputRecord.farm_id == farm.id)).scalars():
+        record.soft_delete()
+    for record in db.execute(select(FarmYieldRecord).where(FarmYieldRecord.farm_id == farm.id)).scalars():
+        record.soft_delete()
+    for flight in db.execute(select(DroneFlight).where(DroneFlight.farm_id == farm.id)).scalars():
+        db.delete(flight)
+
     success = farm_repo.delete(farm, soft=not permanent)
-    
+
     return {
         "message": "Farm deleted successfully",
         "permanent": permanent

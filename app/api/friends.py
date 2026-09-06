@@ -24,6 +24,7 @@ from app.db_config import get_production_db_dependency
 from app.models.database import Chama, FriendRequest, User, user_chama_association
 from app.schemas.friend import (
     ChamaSummary, FriendRequestCreate, FriendRequestResponse, FriendResponse, NearbyFarmerResponse,
+    SentFriendRequestResponse,
 )
 
 router = APIRouter(tags=["Friends"])
@@ -173,6 +174,28 @@ async def list_incoming_friend_requests(
     ]
 
 
+@router.get("/friends/requests/sent", response_model=List[SentFriendRequestResponse])
+async def list_sent_friend_requests(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Requests the caller sent that are still pending - see
+    SentFriendRequestResponse for why this exists."""
+    rows = db.execute(
+        select(FriendRequest, User)
+        .join(User, User.id == FriendRequest.recipient_id)
+        .where(FriendRequest.requester_id == current_user["id"], FriendRequest.status == "pending")
+        .order_by(FriendRequest.created_at.desc())
+    ).all()
+    return [
+        SentFriendRequestResponse(
+            id=req.id, recipient_id=req.recipient_id, recipient_name=_full_name(recipient),
+            recipient_county=recipient.county, created_at=req.created_at,
+        )
+        for req, recipient in rows
+    ]
+
+
 @router.post("/friends/requests/{request_id}/accept", response_model=FriendResponse)
 async def accept_friend_request(
     request_id: int,
@@ -197,8 +220,13 @@ async def reject_friend_request(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency),
 ):
+    """Also doubles as "cancel" for the sender - either side of a still-
+    pending request can remove it, not just the recipient declining it."""
     req = db.execute(
-        select(FriendRequest).where(FriendRequest.id == request_id, FriendRequest.recipient_id == current_user["id"])
+        select(FriendRequest).where(
+            FriendRequest.id == request_id,
+            (FriendRequest.recipient_id == current_user["id"]) | (FriendRequest.requester_id == current_user["id"]),
+        )
     ).scalar_one_or_none()
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found")

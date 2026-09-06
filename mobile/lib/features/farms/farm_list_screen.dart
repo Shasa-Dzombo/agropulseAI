@@ -157,9 +157,12 @@ class _FarmListScreenState extends State<FarmListScreen> {
             title: Text(farm.name),
             subtitle: Text('${farm.county} · ${farm.sizeAcres.toStringAsFixed(1)} acres'),
             trailing: farm.isActive ? null : const Chip(label: Text('Inactive')),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => FarmDetailScreen(farm: farm)),
-            ),
+            onTap: () async {
+              final deleted = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(builder: (_) => FarmDetailScreen(farm: farm)),
+              );
+              if (deleted == true) _loadFirstPage();
+            },
           );
         },
       ),

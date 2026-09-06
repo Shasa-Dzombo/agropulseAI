@@ -39,3 +39,15 @@ class FriendResponse(BaseModel):
     name: str
     county: Optional[str] = None
     friends_since: Optional[datetime] = None
+
+
+class SentFriendRequestResponse(BaseModel):
+    """A still-pending request the caller sent to someone else - the other
+    half of FriendRequestResponse (that's incoming; this is outgoing). Real
+    gap found in testing: without this, a sent request simply disappears
+    from the sender's view until the recipient acts on it."""
+    id: int
+    recipient_id: int
+    recipient_name: str
+    recipient_county: Optional[str] = None
+    created_at: datetime

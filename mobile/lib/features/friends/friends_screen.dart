@@ -20,14 +20,16 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
   late final TabController _tabController;
   late Future<List<NearbyFarmer>> _nearbyFuture;
   late Future<List<IncomingFriendRequest>> _requestsFuture;
+  late Future<List<SentFriendRequest>> _sentFuture;
   late Future<List<Friend>> _friendsFuture;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadNearby();
     _loadRequests();
+    _loadSent();
     _loadFriends();
   }
 
@@ -39,6 +41,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
 
   void _loadNearby() => _nearbyFuture = FriendRepository.instance.listNearbyFarmers();
   void _loadRequests() => _requestsFuture = FriendRepository.instance.listIncomingRequests();
+  void _loadSent() => _sentFuture = FriendRepository.instance.listSentRequests();
   void _loadFriends() => _friendsFuture = FriendRepository.instance.listFriends();
 
   Future<void> _sendRequest(NearbyFarmer farmer) async {
@@ -72,6 +75,18 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     }
   }
 
+  Future<void> _cancelSent(SentFriendRequest request) async {
+    try {
+      await FriendRepository.instance.rejectFriendRequest(request.id);
+      setState(() {
+        _loadSent();
+        _loadNearby();
+      });
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -80,12 +95,14 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
         bottom: TabBar(controller: _tabController, tabs: const [
           Tab(text: 'Nearby'),
           Tab(text: 'Requests'),
+          Tab(text: 'Sent'),
           Tab(text: 'Friends'),
         ]),
       ),
       body: TabBarView(controller: _tabController, children: [
         _buildNearbyTab(),
         _buildRequestsTab(),
+        _buildSentTab(),
         _buildFriendsTab(),
       ]),
     );
@@ -203,6 +220,48 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                         IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => _reject(request)),
                       ],
                     ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSentTab() {
+    return RefreshIndicator(
+      onRefresh: () async {
+        setState(_loadSent);
+        await _sentFuture;
+      },
+      child: FutureBuilder<List<SentFriendRequest>>(
+        future: _sentFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return ListView(children: [
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(snapshot.error is ApiException ? (snapshot.error as ApiException).message : 'Could not load sent requests'),
+              ),
+            ]);
+          }
+          final sent = snapshot.data!;
+          if (sent.isEmpty) {
+            return ListView(children: const [Padding(padding: EdgeInsets.all(24), child: Text('No requests waiting on a reply'))]);
+          }
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              for (final request in sent)
+                Card(
+                  child: ListTile(
+                    title: Text(request.recipientName),
+                    subtitle: Text(request.recipientCounty ?? ''),
+                    trailing: TextButton(onPressed: () => _cancelSent(request), child: const Text('Cancel')),
                   ),
                 ),
             ],

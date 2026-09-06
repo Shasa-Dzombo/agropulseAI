@@ -78,6 +78,27 @@ class FarmInputRepository {
     return FarmYieldRecord.fromJson(json as Map<String, dynamic>);
   }
 
+  /// General edit - crop/season/planted date/expected yield. Distinct from
+  /// [recordHarvest] (same PATCH endpoint, different fields) since they're
+  /// used from different UI moments: this from an "Edit" action any time,
+  /// that specifically for the harvest step.
+  Future<FarmYieldRecord> editYieldRecord(
+    int farmId,
+    int recordId, {
+    String? crop,
+    String? seasonLabel,
+    DateTime? plantedDate,
+    double? expectedYieldKg,
+  }) async {
+    final json = await _api.patch('/farms/$farmId/yields/$recordId', auth: true, body: {
+      'crop': ?crop,
+      'season_label': ?seasonLabel,
+      'planted_date': ?plantedDate?.toIso8601String().split('T').first,
+      'expected_yield_kg': ?expectedYieldKg,
+    });
+    return FarmYieldRecord.fromJson(json as Map<String, dynamic>);
+  }
+
   Future<List<String>> getYieldTips(int farmId, int recordId) async {
     final json = await _api.get('/farms/$farmId/yields/$recordId/tips', auth: true);
     return (json as List).cast<String>();

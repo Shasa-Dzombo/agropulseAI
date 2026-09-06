@@ -65,6 +65,32 @@ class IncomingFriendRequest {
       );
 }
 
+/// Mirrors app/schemas/friend.py's SentFriendRequestResponse - a request
+/// the caller sent that's still awaiting the other person's answer.
+class SentFriendRequest {
+  final int id;
+  final int recipientId;
+  final String recipientName;
+  final String? recipientCounty;
+  final DateTime createdAt;
+
+  SentFriendRequest({
+    required this.id,
+    required this.recipientId,
+    required this.recipientName,
+    required this.recipientCounty,
+    required this.createdAt,
+  });
+
+  factory SentFriendRequest.fromJson(Map<String, dynamic> json) => SentFriendRequest(
+        id: json['id'] as int,
+        recipientId: json['recipient_id'] as int,
+        recipientName: json['recipient_name'] as String,
+        recipientCounty: json['recipient_county'] as String?,
+        createdAt: DateTime.parse(json['created_at'] as String),
+      );
+}
+
 /// Mirrors app/schemas/friend.py's FriendResponse.
 class Friend {
   final int id;

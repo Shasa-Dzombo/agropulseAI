@@ -21,10 +21,17 @@ class FriendRepository {
     return (json as List).map((e) => IncomingFriendRequest.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  Future<List<SentFriendRequest>> listSentRequests() async {
+    final json = await _api.get('/friends/requests/sent', auth: true);
+    return (json as List).map((e) => SentFriendRequest.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
   Future<void> acceptFriendRequest(int requestId) async {
     await _api.post('/friends/requests/$requestId/accept', auth: true);
   }
 
+  /// Also used to cancel a request the caller sent themselves - the
+  /// backend allows either side of a still-pending request to remove it.
   Future<void> rejectFriendRequest(int requestId) async {
     await _api.post('/friends/requests/$requestId/reject', auth: true);
   }

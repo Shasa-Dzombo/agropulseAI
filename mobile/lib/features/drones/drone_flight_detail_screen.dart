@@ -91,8 +91,17 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
                 ),
                 const SizedBox(height: 16),
               ],
-              Text('Analysis summary', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text('Analysis summary', style: Theme.of(context).textTheme.titleMedium),
+                  IconButton(
+                    icon: const Icon(Icons.info_outline, size: 20),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _showMetricsExplainer,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
               _buildSummary(),
               const SizedBox(height: 24),
               Text('Captured images', style: Theme.of(context).textTheme.titleMedium),
@@ -102,6 +111,57 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _showMetricsExplainer() async {
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('What these numbers mean', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 16),
+            _metricExplainer('NDVI (vegetation index)',
+                'A score from the photo\'s colors that estimates how green and leafy the crop looks. '
+                'Higher generally means more healthy live leaf cover; low or negative usually means bare soil, dead plants, or stress.'),
+            _metricExplainer('NDRE',
+                'Similar idea to NDVI, but more sensitive to chlorophyll/nitrogen levels in the leaves - it can catch early nutrient '
+                'stress that NDVI sometimes misses, before the plant visibly yellows.'),
+            _metricExplainer('Canopy coverage',
+                'What share of the photo is covered by living plant leaves, as a percentage - the rest is bare soil, shadow, or other.'),
+            _metricExplainer('Canopy vigor',
+                'A simple good/moderate/low read on how vigorous the visible canopy looks, based on how much of it shows strong, healthy green.'),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+              child: Text(
+                'Right now these are estimated from an ordinary photo, not a real infrared sensor - treat them as a rough scouting cue, not a precise measurement.',
+                style: TextStyle(color: Colors.orange.shade900, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metricExplainer(String title, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 2),
+          Text(body, style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.4)),
+        ],
       ),
     );
   }

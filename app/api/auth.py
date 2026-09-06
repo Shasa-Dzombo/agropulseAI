@@ -60,7 +60,11 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=8)
     full_name: str = Field(..., min_length=2, max_length=200)
     county: Optional[str] = None
-    role: str = Field("farmer", pattern="^(farmer|agronomist|admin)$")
+    # "admin" deliberately excluded - self-registration must never be able to
+    # grant admin/super_admin. There's no promotion endpoint yet (see
+    # app/api/admin.py) - until one exists, granting admin is a manual DB
+    # operation only.
+    role: str = Field("farmer", pattern="^(farmer|agronomist)$")
 
 
 class LoginRequest(BaseModel):

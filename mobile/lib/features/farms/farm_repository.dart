@@ -39,4 +39,10 @@ class FarmRepository {
     final json = await _api.get('/farms/$farmId/weather', auth: true);
     return FarmWeather.fromJson(json as Map<String, dynamic>);
   }
+
+  /// Soft-deletes the farm (the only mode available to a regular owner -
+  /// permanent deletion is admin-only server-side, see app/api/farms.py).
+  Future<void> deleteFarm(int farmId) async {
+    await _api.delete('/farms/$farmId', auth: true);
+  }
 }

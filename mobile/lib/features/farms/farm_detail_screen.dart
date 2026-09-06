@@ -18,6 +18,7 @@ class FarmDetailScreen extends StatefulWidget {
 
 class _FarmDetailScreenState extends State<FarmDetailScreen> {
   late Future<FarmWeather> _weatherFuture;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -27,6 +28,36 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
 
   void _retry() {
     setState(() => _weatherFuture = FarmRepository.instance.getFarmWeather(widget.farm.id));
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete farm?'),
+        content: Text('This removes "${widget.farm.name}" from your farms. This can\'t be undone from the app.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      await FarmRepository.instance.deleteFarm(widget.farm.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _deleting = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
   }
 
   Color _riskColor(String level) {
@@ -57,7 +88,18 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
   Widget build(BuildContext context) {
     final farm = widget.farm;
     return Scaffold(
-      appBar: AppBar(title: Text(farm.name)),
+      appBar: AppBar(
+        title: Text(farm.name),
+        actions: [
+          if (_deleting)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else
+            IconButton(icon: const Icon(Icons.delete_outline), onPressed: _confirmDelete),
+        ],
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),

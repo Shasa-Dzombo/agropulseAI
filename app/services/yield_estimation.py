@@ -51,3 +51,37 @@ def estimate_yield_kg(crop: str, farm_size_acres: Optional[float]) -> Optional[Y
     if per_acre is None:
         return None
     return YieldEstimate(estimated_yield_kg=round(per_acre * farm_size_acres, 1), source=REFERENCE_YIELD_SOURCE)
+
+
+# KALRO (Kenya Agricultural & Livestock Research Organization) trial figures
+# for specific improved varieties under good management - NOT a realized
+# average like REFERENCE_YIELD_KG_PER_ACRE above, so never used as the
+# estimate baseline (that would overstate what a typical farm actually
+# gets). Surfaced only as an informational tip: real, cited, named
+# varieties, framed as "under good management" rather than a promise.
+#
+# - Maize: KALRO's newer MLN/fall-armyworm-tolerant and highland varieties
+#   (e.g. UKAMEZ, FAWTH2002, H614D) - 25-42 bags (90kg) per acre = ~2,250-
+#   3,780 kg/acre, vs the ~7.5 bags/acre (674 kg/acre) national average.
+#   https://scienceafrica.co.ke/2023/04/03/kalro-new-maize-varieties-to-mitigate-against-climate-pests-and-diseases/
+# - Beans: KALRO's Nyota variety - 1.4-2.0 t/ha (~567-810 kg/acre) vs the
+#   ~250 kg/acre national average.
+#   https://agrificsapp.kalro.org/file_uploads/Nyota%20bean%20production%20manual.pdf
+KALRO_VARIETY_TIPS = {
+    "maize": (
+        "KALRO's newer improved maize varieties (e.g. UKAMEZ, FAWTH2002) have shown "
+        "25-42 bags (90kg) per acre in trials under good management - well above the "
+        "national average. Worth asking your local agrovet whether they're available."
+    ),
+    "beans": (
+        "KALRO's Nyota bean variety has shown 1.4-2.0 tonnes per hectare in trials "
+        "under good management - well above the national average. Worth asking your "
+        "local agrovet whether it's available."
+    ),
+}
+
+
+def kalro_variety_tip(crop: str) -> Optional[str]:
+    if not crop:
+        return None
+    return KALRO_VARIETY_TIPS.get(crop.strip().lower())

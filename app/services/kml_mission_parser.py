@@ -119,3 +119,54 @@ def parse_kml_waypoints(
         raise ValueError("No usable waypoints could be extracted from this KML file")
 
     return waypoints, warnings
+
+
+def parse_kml_boundary(kml_bytes: bytes) -> Tuple[List[dict], List[str]]:
+    """Extracts a survey-area BOUNDARY from a KML file - all vertices of the
+    first Polygon's outer ring (or, failing that, the first LineString), not
+    just one point per Placemark like parse_kml_waypoints above. This is the
+    right parser for a real drone-survey boundary export (a single Placemark
+    containing a <Polygon> with many coordinates tracing the parcel) - the
+    waypoint parser would silently keep only the polygon's first vertex,
+    since it deliberately maps one Placemark to one waypoint.
+
+    Returns (points, warnings) where each point is {"lat": float, "lng":
+    float} matching app.schemas.drone.BoundaryPointIn - a shape, not
+    waypoints (no altitude/action/speed)."""
+    try:
+        root = ET.fromstring(kml_bytes)
+    except ET.ParseError as e:
+        raise ValueError(f"Could not parse KML: {e}") from e
+
+    warnings: List[str] = []
+
+    polygons = _find_all(root, "Polygon")
+    coords_el = None
+    if polygons:
+        coords_el = _find_all(polygons[0], "coordinates")
+    if not coords_el:
+        linestrings = _find_all(root, "LineString")
+        if linestrings:
+            coords_el = _find_all(linestrings[0], "coordinates")
+            warnings.append("No <Polygon> found - used the first <LineString> instead")
+    if not coords_el or not coords_el[0].text:
+        raise ValueError("No <Polygon> or <LineString> with coordinates found in KML file")
+
+    points: List[dict] = []
+    for raw in coords_el[0].text.strip().split():
+        try:
+            latitude, longitude, _ = _parse_coordinates_text(raw)
+        except ValueError as e:
+            warnings.append(f"Skipped a vertex: {e}")
+            continue
+        points.append({"lat": latitude, "lng": longitude})
+
+    if len(points) < 3:
+        raise ValueError(f"Only found {len(points)} usable vertex(es) - a boundary needs at least 3")
+
+    # KML polygons repeat the first point at the end to close the ring;
+    # the mobile map draws a closed shape on its own, so drop the duplicate.
+    if len(points) > 1 and points[0] == points[-1]:
+        points = points[:-1]
+
+    return points, warnings

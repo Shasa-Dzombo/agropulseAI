@@ -2269,6 +2269,29 @@ class FarmYieldRecord(Base, TimestampMixin, SoftDeleteMixin):
     )
 
 
+class SavedFlightBoundary(Base, TimestampMixin, SoftDeleteMixin):
+    """A named, reusable survey-area shape for a farm - saved once (drawn on
+    the map or imported from a KML polygon via
+    app.services.kml_mission_parser.parse_kml_boundary), then reused or
+    slightly adjusted for a later flight instead of re-tracing/re-uploading
+    every time. Distinct from DroneFlight.boundary_polygon, which is the
+    shape actually attached to one specific flight - saving one here doesn't
+    touch any flight; attaching it to a flight is a plain copy of `polygon`
+    into that flight's boundary_polygon, editable independently afterward."""
+    __tablename__ = 'saved_flight_boundaries'
+
+    id = Column(Integer, primary_key=True)
+    farm_id = Column(Integer, ForeignKey('farms.id', ondelete='CASCADE'), nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    name = Column(String(200), nullable=False)
+    # List of {"lat": float, "lng": float} - same shape as
+    # DroneFlight.boundary_polygon, see app.schemas.drone.BoundaryPointIn.
+    polygon = Column(JSON, nullable=False)
+
+    farm = relationship("Farm", backref="saved_boundaries")
+
+
 # ============================================================================
 # HELPER FUNCTIONS AND UTILITIES
 # ============================================================================

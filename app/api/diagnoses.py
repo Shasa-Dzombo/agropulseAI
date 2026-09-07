@@ -16,8 +16,8 @@ a permit. Diagnoses are unpaid/ungated until that's wired up; see the NOTE
 above create_diagnosis.
 
 Image storage is local disk (local_uploads/diagnoses/), not S3 - there's no
-AWS configured either, and Claude vision (app/services/claude_ai_service.py)
-already reads local file paths directly, so no S3/public-URL requirement.
+AWS configured either, and AI vision (app/services/ai_service.py) already
+reads local file paths directly, so no S3/public-URL requirement.
 """
 
 import os
@@ -26,13 +26,14 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db_config import get_production_db_dependency
 from app.api.auth import get_current_user
 from app.models.database import Diagnosis
-from app.services.claude_ai_service import claude_ai_service, ClaudeNotConfiguredError
+from app.services.ai_service import ai_service, AIServiceNotConfiguredError
 
 router = APIRouter(prefix="/diagnoses", tags=["AI Crop Health Diagnosis"])
 
@@ -82,18 +83,23 @@ def _run_claude_diagnosis(diagnosis: Diagnosis, db: Session, metadata: dict) -> 
 
     try:
         import asyncio
-        ai_result = asyncio.run(claude_ai_service.diagnose_crop_disease(
+        ai_result = asyncio.run(ai_service.diagnose_crop_disease(
             image_urls=diagnosis.image_urls,
             metadata=metadata,
         ))
-    except ClaudeNotConfiguredError as e:
+    except AIServiceNotConfiguredError as e:
         ai_result = {"success": False, "error": str(e)}
     except Exception as e:
         ai_result = {"success": False, "error": str(e)}
 
     if ai_result.get("success"):
         diagnosis.status = "completed"
-        diagnosis.primary_diagnosis = ai_result.get("primary_diagnosis")
+        # primary_diagnosis is VARCHAR(300) - the model doesn't always write
+        # a short label, so the full text is kept in treatment_plan (JSONB,
+        # unlimited) rather than silently failing the INSERT or losing detail.
+        full_diagnosis = ai_result.get("primary_diagnosis") or ""
+        diagnosis.primary_diagnosis = full_diagnosis[:297] + "..." if len(full_diagnosis) > 300 else full_diagnosis
+        diagnosis.treatment_plan = {"full_diagnosis": full_diagnosis}
         diagnosis.disease_category = ai_result.get("category")
         diagnosis.confidence_score = ai_result.get("confidence_score")
         diagnosis.affected_area_percentage = ai_result.get("affected_area_percentage")
@@ -168,6 +174,34 @@ def get_diagnosis(
     return diagnosis
 
 
+@router.get("/{diagnosis_id}/images/{index}")
+def get_diagnosis_image(
+    diagnosis_id: int,
+    index: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Streams one of the photos a diagnosis was made from, ownership-
+    checked the same as every other diagnosis endpoint - so a diagnosis
+    history list can show the actual photo, not just the text result.
+    image_urls entries are real local paths (see this file's module
+    docstring) - either relative to the backend's CWD (this screen's own
+    upload flow) or absolute (drone-sourced, see
+    DroneAIService.analyze_image) - os.path handles both the same way."""
+    diagnosis = db.query(Diagnosis).filter(
+        Diagnosis.id == diagnosis_id,
+        Diagnosis.user_id == current_user["id"],
+    ).first()
+    if not diagnosis:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Diagnosis not found")
+    if index < 0 or index >= len(diagnosis.image_urls or []):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No image at that index")
+    path = diagnosis.image_urls[index]
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @router.get("", response_model=List[DiagnosisResponse])
 def list_diagnoses(
     current_user: dict = Depends(get_current_user),
@@ -208,6 +242,6 @@ def upload_diagnosis_image(
         f.write(file.file.read())
 
     # Forward slashes even on Windows - this path round-trips through JSON
-    # and back into claude_ai_service's file-open call, and backslashes are
+    # and back into ai_service's file-open call, and backslashes are
     # an easy source of double-escaping bugs across that boundary.
     return {"success": True, "image_url": destination.replace(os.sep, "/"), "filename": unique_filename}

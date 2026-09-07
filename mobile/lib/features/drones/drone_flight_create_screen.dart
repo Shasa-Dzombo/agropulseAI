@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../core/api_exception.dart';
+import 'drone_boundary_map_screen.dart';
 import 'drone_repository.dart';
 
 class DroneFlightCreateScreen extends StatefulWidget {
@@ -25,10 +27,14 @@ class DroneFlightCreateScreen extends StatefulWidget {
 class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
   final _formKey = GlobalKey<FormState>();
   final _droneIdController = TextEditingController();
+  final _notesController = TextEditingController();
   late final TextEditingController _latController;
   late final TextEditingController _lngController;
   bool _locating = false;
   bool _saving = false;
+  List<LatLng>? _boundary;
+  bool _goalHealth = true;
+  bool _goalCount = false;
 
   @override
   void initState() {
@@ -43,6 +49,7 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
   @override
   void dispose() {
     _droneIdController.dispose();
+    _notesController.dispose();
     _latController.dispose();
     _lngController.dispose();
     super.dispose();
@@ -79,6 +86,19 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
     }
   }
 
+  Future<void> _traceBoundary() async {
+    final center = LatLng(
+      double.tryParse(_latController.text) ?? widget.farmLatitude,
+      double.tryParse(_lngController.text) ?? widget.farmLongitude,
+    );
+    final result = await Navigator.of(context).push<List<LatLng>>(
+      MaterialPageRoute(
+        builder: (_) => DroneBoundaryMapScreen(initialCenter: center, initialPoints: _boundary),
+      ),
+    );
+    if (result != null) setState(() => _boundary = result);
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
@@ -88,6 +108,12 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
         droneId: _droneIdController.text.trim(),
         homeLatitude: double.parse(_latController.text),
         homeLongitude: double.parse(_lngController.text),
+        boundaryPolygon: _boundary,
+        surveyGoals: [
+          if (_goalHealth) 'health',
+          if (_goalCount) 'count',
+        ],
+        surveyNotes: _notesController.text.trim(),
       );
       if (!mounted) return;
       Navigator.of(context).pop(flight);
@@ -163,6 +189,51 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
                       : const Icon(Icons.my_location),
                   label: const Text('Use my location instead'),
                 ),
+                const SizedBox(height: 24),
+                Text('What do you want from this survey?', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 4),
+                CheckboxListTile(
+                  value: _goalHealth,
+                  onChanged: (v) => setState(() => _goalHealth = v ?? false),
+                  title: const Text('Health analysis'),
+                  subtitle: const Text('Disease, pest, or stress read on each photo'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                CheckboxListTile(
+                  value: _goalCount,
+                  onChanged: (v) => setState(() => _goalCount = v ?? false),
+                  title: const Text('Count plants/trees'),
+                  subtitle: const Text('Rough visible count per photo'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _notesController,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Anything else? (optional)',
+                    hintText: 'e.g. sprayed fungicide 5 days ago, focus on the north corner',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: _traceBoundary,
+                  icon: const Icon(Icons.crop_free),
+                  label: Text(_boundary == null ? 'Trace flight boundary (optional)' : 'Edit flight boundary'),
+                ),
+                if (_boundary != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text('Boundary set · ${_boundary!.length} points', style: const TextStyle(color: Colors.black54))),
+                        TextButton(onPressed: () => setState(() => _boundary = null), child: const Text('Clear')),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 24),
                 FilledButton(
                   onPressed: _saving ? null : _submit,

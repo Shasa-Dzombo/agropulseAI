@@ -100,12 +100,32 @@ class Settings(BaseSettings):
     # gracefully, same pattern as KINDWISE_API_KEY above.
     OPENWEATHER_API_KEY: Optional[str] = None
 
-    # Anthropic Claude API (direct, not via AWS Bedrock) - powers AI treatment
-    # recommendations, greenhouse disease diagnosis vision fallback, and the
-    # farmer chatbot. Unset = those features return a clear "not configured"
-    # error instead of failing silently.
+    # AI provider switch (app/services/ai_service.py) - powers AI treatment
+    # recommendations, greenhouse disease diagnosis vision, and the farmer
+    # chatbot. Mirrors the AgentCustodian project's shared/llm.py pattern:
+    # one LLM_PROVIDER picks which KEY/URL/MODEL below is active.
+    # "openai" (default) | "anthropic" | "ollama" | "openweight" (any
+    # OpenAI-compatible endpoint - self-hosted vLLM, a private gateway, etc).
+    # Unset key for the active provider = those features return a clear
+    # "not configured" error instead of failing silently.
+    LLM_PROVIDER: str = "openai"
+    LLM_MODEL: Optional[str] = None
+
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_URL: Optional[str] = None
+
     ANTHROPIC_API_KEY: Optional[str] = None
-    ANTHROPIC_MODEL: str = "claude-opus-5"
+
+    # Ollama: OpenAI-compatible endpoint at <OLLAMA_API_URL>/v1 - a local
+    # daemon needs no key, Ollama Cloud needs a real one from account settings.
+    OLLAMA_API_KEY: Optional[str] = None
+    OLLAMA_API_URL: str = "http://localhost:11434"
+
+    # Open Weight: any standard OpenAI-compatible endpoint - self-hosted
+    # vLLM, a private inference gateway, etc. OPEN_WEIGHT_BASE_URL should
+    # already include the /v1 suffix.
+    OPEN_WEIGHT_API_KEY: Optional[str] = None
+    OPEN_WEIGHT_BASE_URL: Optional[str] = None
 
     class Config:
         env_file = _ENV_FILE

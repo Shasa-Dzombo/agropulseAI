@@ -63,7 +63,27 @@ class DroneFlight(Base):
     # DroneAIService.ingest_captured_image().
     mission_plan = Column(JSON, nullable=True)
 
+    # The area the farmer traced on the map to survey - a plain list of
+    # {"lat": float, "lng": float} vertices, purely a boundary shape, not a
+    # flight path (see mission_plan above for that). Nothing in this system
+    # flies to it either - same manual-ingest philosophy - it's shown back
+    # on the map and used for a real client-side area estimate. Settable at
+    # creation or edited later via PATCH.
+    boundary_polygon = Column(JSON, nullable=True)
+
     disease_detection_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    # What the farmer is trying to get out of this survey - a plain list of
+    # strings from a fixed small vocabulary ("count", "health"; see
+    # app.schemas.drone.SURVEY_GOALS), set once at flight creation and used
+    # to steer AIService.analyze_drone_photo()'s prompt per photo (e.g.
+    # "count" asks the model to estimate visible plants/trees, "health" runs
+    # the disease/vigor read). Multiple goals can be selected at once.
+    survey_goals = Column(JSON, nullable=True)
+    # Free-text farmer context ("focus on the north corner", "sprayed
+    # fungicide X last week, check if it's working") - passed into the same
+    # analyze_drone_photo() prompt as-is, not structured.
+    survey_notes = Column(Text, nullable=True)
 
     # Yield projection placeholders - intentionally unpopulated. Real values
     # need a model calibrated against actual harvest-yield ground truth this

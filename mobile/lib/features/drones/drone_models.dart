@@ -1,3 +1,5 @@
+import 'package:latlong2/latlong.dart';
+
 /// Plain-language wording for DroneImageAnalysis.healthStatus/vigorLevel,
 /// shared by the capture-result card and the flight's captured-images list
 /// so a farmer sees the same wording everywhere instead of raw enum values
@@ -42,6 +44,14 @@ class DroneFlight {
   final String status;
   final double homeLatitude;
   final double homeLongitude;
+  // Traced survey-area boundary - a shape, not a flight path. Null until the
+  // farmer draws or imports one (see DroneBoundaryMapScreen).
+  final List<LatLng>? boundaryPolygon;
+  // What the farmer wants out of this survey - any of "count"/"health" - and
+  // any free-text context, set once at flight creation. Steers the on-demand
+  // AI analysis per photo (see DroneDiagnosis).
+  final List<String>? surveyGoals;
+  final String? surveyNotes;
   final double? weatherTemperatureC;
   final String? weatherConditions;
   final bool? weatherFlightSuitable;
@@ -58,6 +68,9 @@ class DroneFlight {
     required this.status,
     required this.homeLatitude,
     required this.homeLongitude,
+    required this.boundaryPolygon,
+    required this.surveyGoals,
+    required this.surveyNotes,
     required this.weatherTemperatureC,
     required this.weatherConditions,
     required this.weatherFlightSuitable,
@@ -75,6 +88,11 @@ class DroneFlight {
         status: json['status'] as String,
         homeLatitude: (json['home_latitude'] as num).toDouble(),
         homeLongitude: (json['home_longitude'] as num).toDouble(),
+        boundaryPolygon: (json['boundary_polygon'] as List?)
+            ?.map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+            .toList(),
+        surveyGoals: (json['survey_goals'] as List?)?.cast<String>(),
+        surveyNotes: json['survey_notes'] as String?,
         weatherTemperatureC: (json['weather_temperature_c'] as num?)?.toDouble(),
         weatherConditions: json['weather_conditions'] as String?,
         weatherFlightSuitable: json['weather_flight_suitable'] as bool?,
@@ -136,12 +154,49 @@ class DroneImageAnalysis {
 /// green_channel_as_nir_placeholder), not a real infrared reading. The
 /// result screen uses this to show an honest caveat instead of stating
 /// "dead"/a precise NDVI number with false confidence.
+/// Mirrors app/schemas/drone.py's DiseaseAnswer - the on-demand deep AI read
+/// from POST .../images/{id}/analyze (see DroneAIService.analyze_image),
+/// distinct from DroneImageAnalysis above (the always-on, free, local NDVI/
+/// vigor read every photo already gets). Null until the farmer taps to
+/// request it.
+class DroneDiagnosis {
+  final String? diseaseName;
+  final double? confidence;
+  final String? severity;
+  final bool isHealthy;
+  final List<String> topTreatmentActions;
+  // Only non-null when the flight's survey_goals included "count".
+  final int? estimatedCount;
+  final String? countNotes;
+
+  DroneDiagnosis({
+    required this.diseaseName,
+    required this.confidence,
+    required this.severity,
+    required this.isHealthy,
+    required this.topTreatmentActions,
+    required this.estimatedCount,
+    required this.countNotes,
+  });
+
+  factory DroneDiagnosis.fromJson(Map<String, dynamic> json) => DroneDiagnosis(
+        diseaseName: json['disease_name'] as String?,
+        confidence: (json['confidence'] as num?)?.toDouble(),
+        severity: json['severity'] as String?,
+        isHealthy: json['is_healthy'] as bool? ?? false,
+        topTreatmentActions: (json['top_treatment_actions'] as List?)?.cast<String>() ?? const [],
+        estimatedCount: json['estimated_count'] as int?,
+        countNotes: json['count_notes'] as String?,
+      );
+}
+
 class DroneImage {
   final int id;
   final int flightId;
   final int waypointIndex;
   final String? treeId;
   final DroneImageAnalysis? analysis;
+  final DroneDiagnosis? diagnosis;
   final DateTime? capturedAt;
   final bool hasRealNir;
 
@@ -151,6 +206,7 @@ class DroneImage {
     required this.waypointIndex,
     required this.treeId,
     required this.analysis,
+    required this.diagnosis,
     required this.capturedAt,
     required this.hasRealNir,
   });
@@ -161,6 +217,7 @@ class DroneImage {
         waypointIndex: json['waypoint_index'] as int,
         treeId: json['tree_id'] as String?,
         analysis: json['analysis'] == null ? null : DroneImageAnalysis.fromJson(json['analysis'] as Map<String, dynamic>),
+        diagnosis: json['diagnosis'] == null ? null : DroneDiagnosis.fromJson(json['diagnosis'] as Map<String, dynamic>),
         capturedAt: json['captured_at'] == null ? null : DateTime.parse(json['captured_at'] as String),
         hasRealNir: json['nir_url'] != null,
       );

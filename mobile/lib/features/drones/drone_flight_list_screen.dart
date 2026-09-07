@@ -166,10 +166,22 @@ class _DroneFlightListScreenState extends State<DroneFlightListScreen> {
                   subtitle: Text(flight.startedAt == null
                       ? flight.status
                       : '${flight.startedAt!.year}-${flight.startedAt!.month.toString().padLeft(2, '0')}-${flight.startedAt!.day.toString().padLeft(2, '0')}'),
-                  trailing: Chip(
-                    label: Text(flight.status.replaceAll('_', ' ')),
-                    backgroundColor: _statusColor(flight.status).withValues(alpha: 0.15),
-                    labelStyle: TextStyle(color: _statusColor(flight.status)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Chip(
+                        label: Text(flight.status.replaceAll('_', ' ')),
+                        backgroundColor: _statusColor(flight.status).withValues(alpha: 0.15),
+                        labelStyle: TextStyle(color: _statusColor(flight.status)),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: () async {
+                          final deleted = await _confirmDeleteFlight(flight);
+                          if (deleted) _refresh();
+                        },
+                      ),
+                    ],
                   ),
                   onTap: () => _openDetail(flight),
                 ),

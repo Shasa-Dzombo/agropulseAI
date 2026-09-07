@@ -15,12 +15,29 @@ class WaypointIn(BaseModel):
     tree_id: Optional[str] = None
 
 
+class BoundaryPointIn(BaseModel):
+    """One vertex of a traced survey-area boundary - see
+    DroneFlight.boundary_polygon. Deliberately just a shape (lat/lng), not
+    a waypoint - no altitude/action/speed, nothing here is flown."""
+    lat: float
+    lng: float
+
+
 class KmlWaypointsResponse(BaseModel):
     """Result of parsing a .kml file into waypoints
     (app.services.kml_mission_parser). Reviewable, not auto-submitted - the
     caller edits/confirms these and then attaches them as mission_plan on
     CreateManualFlightRequest."""
     waypoints: List[WaypointIn]
+    warnings: List[str] = []
+
+
+class KmlBoundaryResponse(BaseModel):
+    """Result of parsing a .kml file's Polygon/LineString into a boundary
+    shape (app.services.kml_mission_parser.parse_kml_boundary) - distinct
+    from KmlWaypointsResponse above, which extracts one point per Placemark
+    for mission_plan, not a full boundary."""
+    points: List[BoundaryPointIn]
     warnings: List[str] = []
 
 
@@ -40,6 +57,12 @@ class CreateManualFlightRequest(BaseModel):
     home_longitude: float
     home_altitude: float = 0.0
     mission_plan: Optional[List[WaypointIn]] = None
+    boundary_polygon: Optional[List[BoundaryPointIn]] = None
+    # What the farmer wants out of this survey - any of SURVEY_GOALS, steers
+    # AIService.analyze_drone_photo()'s prompt per photo (on-demand, see
+    # POST .../images/{image_id}/analyze - not run automatically per photo).
+    survey_goals: Optional[List[Literal["count", "health"]]] = None
+    survey_notes: Optional[str] = None
 
 
 class UpdateFlightRequest(BaseModel):
@@ -47,6 +70,9 @@ class UpdateFlightRequest(BaseModel):
     DroneAIService.update_flight()."""
     drone_id: Optional[str] = None
     target_altitude_m: Optional[float] = None
+    boundary_polygon: Optional[List[BoundaryPointIn]] = None
+    survey_goals: Optional[List[Literal["count", "health"]]] = None
+    survey_notes: Optional[str] = None
 
 
 class CompleteFlightRequest(BaseModel):
@@ -69,6 +95,11 @@ class DroneFlightResponse(BaseModel):
     # Reference-only waypoints attached at flight start (e.g. KML-derived) -
     # used for nearest-GPS tree_id auto-tagging, not flown by this system.
     mission_plan: Optional[List[Dict[str, Any]]] = None
+    # Traced survey-area boundary - a shape, not a flight path (see
+    # DroneFlight.boundary_polygon). None until the farmer draws one.
+    boundary_polygon: Optional[List[Dict[str, float]]] = None
+    survey_goals: Optional[List[str]] = None
+    survey_notes: Optional[str] = None
     disease_detection_enabled: bool = False
     # Yield placeholders - always null today, see app/models/drone.py.
     projected_yield_kg_per_hectare: Optional[float] = None
@@ -99,14 +130,20 @@ class DroneFlightResponse(BaseModel):
 
 class DiseaseAnswer(BaseModel):
     """Lightweight disease answer embedded on DroneImageResponse. Built from
-    the real app.models.diagnosis.Diagnosis row - full detail (all treatment
-    options, EPPO code, alternative diagnoses) is available via
+    the real app.models.database.Diagnosis row (see
+    app.api.drones._build_disease_answer) - full detail (all treatment
+    options, alternative diagnoses) is available via
     GET /diagnoses/{diagnosis_id}."""
     disease_name: Optional[str] = None
     confidence: Optional[float] = None
     severity: Optional[str] = None
     is_healthy: bool = False
     top_treatment_actions: List[str] = []
+    # Only populated when the flight's survey_goals included "count" - see
+    # AIService.analyze_drone_photo. count_notes explains anything that
+    # makes the count uncertain (overlapping canopies, frame edge cutoff).
+    estimated_count: Optional[int] = None
+    count_notes: Optional[str] = None
 
 
 class DroneImageAnalysisResponse(BaseModel):

@@ -17,7 +17,7 @@ class DiagnosisUploadScreen extends StatefulWidget {
 class _DiagnosisUploadScreenState extends State<DiagnosisUploadScreen> {
   final _picker = ImagePicker();
   final _symptomsController = TextEditingController();
-  XFile? _image;
+  final List<XFile> _images = [];
   bool _submitting = false;
 
   @override
@@ -26,21 +26,33 @@ class _DiagnosisUploadScreenState extends State<DiagnosisUploadScreen> {
     super.dispose();
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final picked = await _picker.pickImage(source: source, maxWidth: 1600, imageQuality: 85);
-    if (picked != null) setState(() => _image = picked);
+  Future<void> _pickFromCamera() async {
+    final picked = await _picker.pickImage(source: ImageSource.camera, maxWidth: 1600, imageQuality: 85);
+    if (picked != null) setState(() => _images.add(picked));
   }
 
+  Future<void> _pickFromGallery() async {
+    // pickMultiImage lets the farmer select several photos of the same
+    // plant (different angles/leaves) in one go - they all go into a
+    // single diagnosis (backend already accepts image_urls: List[str]).
+    final picked = await _picker.pickMultiImage(maxWidth: 1600, imageQuality: 85);
+    if (picked.isNotEmpty) setState(() => _images.addAll(picked));
+  }
+
+  void _removeImage(int index) => setState(() => _images.removeAt(index));
+
   Future<void> _submit() async {
-    final image = _image;
-    if (image == null) return;
+    if (_images.isEmpty) return;
 
     setState(() => _submitting = true);
     try {
-      final bytes = await image.readAsBytes();
-      final imageUrl = await DiagnosisRepository.instance.uploadImage(bytes, image.name);
+      final imageUrls = <String>[];
+      for (final image in _images) {
+        final bytes = await image.readAsBytes();
+        imageUrls.add(await DiagnosisRepository.instance.uploadImage(bytes, image.name));
+      }
       final diagnosis = await DiagnosisRepository.instance.createDiagnosis(
-        imageUrls: [imageUrl],
+        imageUrls: imageUrls,
         userSymptoms: _symptomsController.text.trim().isEmpty ? null : _symptomsController.text.trim(),
       );
       if (!mounted) return;
@@ -62,25 +74,57 @@ class _DiagnosisUploadScreenState extends State<DiagnosisUploadScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AspectRatio(
-                aspectRatio: 1,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
+              if (_images.isEmpty)
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Center(child: Icon(Icons.eco_outlined, size: 64)),
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: _image == null
-                      ? const Center(child: Icon(Icons.eco_outlined, size: 64))
-                      : Image.file(File(_image!.path), fit: BoxFit.cover),
+                )
+              else
+                SizedBox(
+                  height: 120,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _images.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) => Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.file(File(_images[index].path), width: 120, height: 120, fit: BoxFit.cover),
+                        ),
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: GestureDetector(
+                            onTap: _submitting ? null : () => _removeImage(index),
+                            child: const CircleAvatar(
+                              radius: 12,
+                              backgroundColor: Colors.black54,
+                              child: Icon(Icons.close, size: 16, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
+              if (_images.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('${_images.length} photo${_images.length == 1 ? '' : 's'} selected', style: const TextStyle(color: Colors.black54)),
+                ),
               const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _submitting ? null : () => _pickImage(ImageSource.camera),
+                      onPressed: _submitting ? null : _pickFromCamera,
                       icon: const Icon(Icons.camera_alt),
                       label: const Text('Camera'),
                     ),
@@ -88,7 +132,7 @@ class _DiagnosisUploadScreenState extends State<DiagnosisUploadScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _submitting ? null : () => _pickImage(ImageSource.gallery),
+                      onPressed: _submitting ? null : _pickFromGallery,
                       icon: const Icon(Icons.photo_library),
                       label: const Text('Gallery'),
                     ),
@@ -107,10 +151,10 @@ class _DiagnosisUploadScreenState extends State<DiagnosisUploadScreen> {
               ),
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: (_image == null || _submitting) ? null : _submit,
+                onPressed: (_images.isEmpty || _submitting) ? null : _submit,
                 child: _submitting
                     ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Diagnose'),
+                    : Text(_images.length > 1 ? 'Diagnose ${_images.length} photos' : 'Diagnose'),
               ),
             ],
           ),

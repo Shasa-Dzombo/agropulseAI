@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import FileResponse
 
 from app.db_config import get_production_db_dependency
-from app.models.diagnosis import Diagnosis, DiseaseCategory
+from app.models.database import Diagnosis
 from app.models.drone import DroneImageAnalysis
 from app.models.database import Farm
 from app.schemas.drone import (
@@ -15,11 +15,12 @@ from app.schemas.drone import (
     FarmWeatherResponse, WeatherSnapshotOut, FlightConditionOut,
     DiseasePressureOut, AgriculturalAlertOut,
     CreateManualFlightRequest, CompleteFlightRequest, KmlWaypointsResponse, UpdateFlightRequest,
+    KmlBoundaryResponse,
 )
 from app.api.auth import get_current_user
 from app.config import settings
 from app.services.drone_ai_service import DroneAIService
-from app.services.kml_mission_parser import parse_kml_waypoints
+from app.services.kml_mission_parser import parse_kml_waypoints, parse_kml_boundary
 from app.services.local_image_storage import save_image_locally
 from app.services.supabase_image_storage import save_image_to_supabase
 from app.services.weather_service import (
@@ -42,35 +43,38 @@ def _build_service(db: Session) -> DroneAIService:
 
 
 def _build_disease_answer(diagnosis: Optional[Diagnosis]) -> Optional[DiseaseAnswer]:
-    """Maps the real Diagnosis model's fields onto the lighter DiseaseAnswer
-    shape. Not done via DroneImageResponse.model_validate()'s automatic
-    from_attributes traversal - Diagnosis's field names (primary_diagnosis,
-    confidence_score, severity_level, treatment_recommendations) don't match
+    """Maps the real (Universe B) Diagnosis model's fields onto the lighter
+    DiseaseAnswer shape. Not done via DroneImageResponse.model_validate()'s
+    automatic from_attributes traversal - Diagnosis's field names
+    (primary_diagnosis, disease_category, immediate_actions) don't match
     DiseaseAnswer's, so that would silently produce an all-defaults/empty
     answer instead of an error.
 
-    Always receives None today: DroneImage.diagnosis_id is only ever set by
-    the per-image disease-detection path, which raises NotImplementedError
-    rather than run (see DroneAIService._process_and_persist_image) - it
-    still creates the old Universe A Diagnosis row this function expects,
-    which nothing else in the app reads any more. Left in place, rather than
-    deleted, so this only needs revisiting once, in one place, when that
-    integration is redone against the real (Universe B) diagnosis flow."""
+    immediate_actions/preventive_measures are plain List[str] here (see
+    AIService.diagnose_crop_disease/analyze_drone_photo's schemas and
+    app/api/diagnoses.py's _run_claude_diagnosis, which is what actually
+    populates a Diagnosis row today) - not the priority/action dict shape
+    this function used to assume back when it was written against the old,
+    never-actually-wired Universe A model."""
     if diagnosis is None:
         return None
 
-    treatments = diagnosis.treatment_recommendations or []
-    top_actions = [
-        t["action"] for t in treatments
-        if isinstance(t, dict) and t.get("priority") in (1, 2) and t.get("action")
-    ][:3]
+    top_actions = (diagnosis.immediate_actions or [])[:3]
+    # estimated_count/count_notes/full_diagnosis are drone-analysis-only (see
+    # DroneAIService.analyze_image) and have nowhere else to live on
+    # Diagnosis - stashed in the otherwise-unused treatment_plan JSONB.
+    # full_diagnosis is the untruncated text (primary_diagnosis is
+    # VARCHAR(300) and gets cut off with an ellipsis for longer AI answers).
+    plan = diagnosis.treatment_plan or {}
 
     return DiseaseAnswer(
-        disease_name=diagnosis.primary_diagnosis,
+        disease_name=plan.get("full_diagnosis") or diagnosis.primary_diagnosis,
         confidence=diagnosis.confidence_score,
         severity=diagnosis.severity_level,
-        is_healthy=diagnosis.category == DiseaseCategory.HEALTHY,
+        is_healthy=diagnosis.disease_category == "healthy",
         top_treatment_actions=top_actions,
+        estimated_count=plan.get("estimated_count"),
+        count_notes=plan.get("count_notes"),
     )
 
 
@@ -100,6 +104,24 @@ def parse_kml_mission(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     return KmlWaypointsResponse(waypoints=waypoints, warnings=warnings)
+
+
+@router.post("/flights/parse-kml-boundary", response_model=KmlBoundaryResponse)
+def parse_kml_boundary_endpoint(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Converts an uploaded .kml file's Polygon (or LineString) into a
+    boundary shape - all vertices, unlike parse-kml above which keeps only
+    one point per Placemark. Does not create or touch a flight - review the
+    returned points, then attach as boundary_polygon on POST/PATCH
+    /flights/manual|{flight_id}."""
+    kml_bytes = file.file.read()
+    try:
+        points, warnings = parse_kml_boundary(kml_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return KmlBoundaryResponse(points=points, warnings=warnings)
 
 
 @router.post("/flights/manual", response_model=DroneFlightResponse, status_code=status.HTTP_201_CREATED)
@@ -137,6 +159,9 @@ def create_manual_flight(
         home_longitude=flight_data.home_longitude,
         home_altitude=flight_data.home_altitude,
         mission_plan=[wp.model_dump() for wp in flight_data.mission_plan] if flight_data.mission_plan else None,
+        boundary_polygon=[p.model_dump() for p in flight_data.boundary_polygon] if flight_data.boundary_polygon else None,
+        survey_goals=flight_data.survey_goals,
+        survey_notes=flight_data.survey_notes,
     )
     return DroneFlightResponse.model_validate(flight)
 
@@ -259,12 +284,15 @@ def update_flight(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_production_db_dependency),
 ):
-    """Edit operational metadata (drone_id, target_altitude_m) - see
+    """Edit operational metadata (drone_id, target_altitude_m,
+    boundary_polygon, survey_goals, survey_notes) - see
     DroneAIService.update_flight() for what's deliberately not editable."""
     service = DroneAIService(db)
     flight = service.update_flight(
         flight_id, current_user["id"],
         drone_id=request.drone_id, target_altitude_m=request.target_altitude_m,
+        boundary_polygon=[p.model_dump() for p in request.boundary_polygon] if request.boundary_polygon else None,
+        survey_goals=request.survey_goals, survey_notes=request.survey_notes,
     )
     return DroneFlightResponse.model_validate(flight)
 
@@ -289,6 +317,42 @@ def delete_flight_image(
 ):
     service = DroneAIService(db)
     service.delete_image(flight_id, image_id, current_user["id"])
+
+
+@router.post("/flights/{flight_id}/images/{image_id}/analyze", response_model=DroneImageResponse)
+def analyze_flight_image(
+    flight_id: int,
+    image_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """On-demand deep AI read of one captured photo (see
+    DroneAIService.analyze_image) - separate from the always-on, free NDVI/
+    vigor analysis every photo already gets on upload. A real network call
+    to the configured LLM_PROVIDER (~15-20s) and a real cost against it, so
+    this is opt-in per photo rather than automatic. Steered by the flight's
+    survey_goals/survey_notes (PATCH /flights/{flight_id} to set them) and
+    the farm's own recent input/yield history.
+    """
+    service = DroneAIService(db)
+    image = service.analyze_image(flight_id, image_id, current_user["id"])
+    diagnosis = db.execute(select(Diagnosis).where(Diagnosis.id == image.diagnosis_id)).scalar_one_or_none()
+    return DroneImageResponse(
+        id=image.id,
+        flight_id=image.flight_id,
+        waypoint_index=image.waypoint_index,
+        tree_id=image.tree_id,
+        rgb_url=image.rgb_url,
+        nir_url=image.nir_url,
+        latitude=image.latitude,
+        longitude=image.longitude,
+        altitude=image.altitude,
+        ground_sampling_distance_cm=image.ground_sampling_distance_cm,
+        diagnosis_id=image.diagnosis_id,
+        diagnosis=_build_disease_answer(diagnosis),
+        analysis=DroneImageAnalysisResponse.model_validate(image.analysis) if image.analysis else None,
+        captured_at=image.captured_at,
+    )
 
 
 @router.get("/flights/{flight_id}/images/{image_id}/rgb")
@@ -337,9 +401,15 @@ def list_flight_images(
     # DiseaseAnswer isn't itself from_attributes-configured, so letting
     # model_validate try to auto-coerce a diagnosis row raises a
     # ValidationError - _build_disease_answer does the real field mapping
-    # instead. diagnosis_id is always None today (see app/models/drone.py's
-    # DroneImage.diagnosis_id comment), so _build_disease_answer is called
-    # with None here rather than a query - nothing to look up yet.
+    # instead. One batched query for every referenced diagnosis rather than
+    # one per image (most images have none - see DroneAIService.analyze_image,
+    # the only thing that ever sets diagnosis_id).
+    diagnosis_ids = [image.diagnosis_id for image in images if image.diagnosis_id]
+    diagnoses_by_id = {}
+    if diagnosis_ids:
+        diagnoses_by_id = {
+            d.id: d for d in db.execute(select(Diagnosis).where(Diagnosis.id.in_(diagnosis_ids))).scalars().all()
+        }
     return [
         DroneImageResponse(
             id=image.id,
@@ -353,7 +423,7 @@ def list_flight_images(
             altitude=image.altitude,
             ground_sampling_distance_cm=image.ground_sampling_distance_cm,
             diagnosis_id=image.diagnosis_id,
-            diagnosis=_build_disease_answer(None),
+            diagnosis=_build_disease_answer(diagnoses_by_id.get(image.diagnosis_id)),
             analysis=DroneImageAnalysisResponse.model_validate(image.analysis) if image.analysis else None,
             captured_at=image.captured_at,
         )

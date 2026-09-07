@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../core/api_exception.dart';
+import 'drone_analysis_tracker.dart';
+import 'drone_boundary_map_screen.dart';
 import 'drone_image_capture_screen.dart';
+import 'drone_image_detail_screen.dart';
+import 'drone_scan_screen.dart';
 import 'drone_image_view.dart';
 import 'drone_models.dart';
 import 'drone_repository.dart';
@@ -85,6 +90,24 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
     }
   }
 
+  Future<void> _editBoundary() async {
+    final result = await Navigator.of(context).push<List<LatLng>>(
+      MaterialPageRoute(
+        builder: (_) => DroneBoundaryMapScreen(
+          initialCenter: LatLng(_flight.homeLatitude, _flight.homeLongitude),
+          initialPoints: _flight.boundaryPolygon,
+        ),
+      ),
+    );
+    if (result == null) return;
+    try {
+      final updated = await DroneRepository.instance.updateFlight(_flight.id, boundaryPolygon: result);
+      if (mounted) setState(() => _flight = updated);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   Future<void> _deleteImage(DroneImage image) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -109,13 +132,43 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
     }
   }
 
+  /// Fire-and-forget through the tracker (see DroneAnalysisTracker) - stays
+  /// running even if this screen is closed before it finishes; refreshes
+  /// the list on completion only if still mounted and on this screen.
+  void _analyzeImage(DroneImage image) {
+    setState(() {});
+    DroneAnalysisTracker.instance.start(_flight.id, image.id).then((_) {
+      if (mounted) _refresh();
+    }).catchError((e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e is ApiException ? e.message : 'AI analysis failed')),
+        );
+        setState(() {});
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final inProgress = _flight.status == 'in_progress';
     return Scaffold(
       appBar: AppBar(
         title: Text('Flight · ${_flight.droneId}'),
-        actions: [IconButton(icon: const Icon(Icons.edit_outlined), onPressed: _editDroneId)],
+        actions: [
+          if (inProgress)
+            IconButton(
+              icon: const Icon(Icons.camera_enhance_outlined),
+              tooltip: 'Scan mode',
+              onPressed: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => DroneScanScreen(flightId: _flight.id)),
+                );
+                _refresh();
+              },
+            ),
+          IconButton(icon: const Icon(Icons.edit_outlined), onPressed: _editDroneId),
+        ],
       ),
       floatingActionButton: inProgress
           ? FloatingActionButton.extended(
@@ -169,34 +222,38 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
     await showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('What these numbers mean', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 16),
-            _metricExplainer('NDVI (vegetation index)',
-                'A score from the photo\'s colors that estimates how green and leafy the crop looks. '
-                'Higher generally means more healthy live leaf cover; low or negative usually means bare soil, dead plants, or stress.'),
-            _metricExplainer('NDRE',
-                'Similar idea to NDVI, but more sensitive to chlorophyll/nitrogen levels in the leaves - it can catch early nutrient '
-                'stress that NDVI sometimes misses, before the plant visibly yellows.'),
-            _metricExplainer('Canopy coverage',
-                'What share of the photo is covered by living plant leaves, as a percentage - the rest is bare soil, shadow, or other.'),
-            _metricExplainer('Canopy vigor',
-                'A simple good/moderate/low read on how vigorous the visible canopy looks, based on how much of it shows strong, healthy green.'),
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
-              child: Text(
-                'Right now these are estimated from an ordinary photo, not a real infrared sensor - treat them as a rough scouting cue, not a precise measurement.',
-                style: TextStyle(color: Colors.orange.shade900, fontSize: 13),
+      isScrollControlled: true,
+      builder: (context) => ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('What these numbers mean', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 16),
+              _metricExplainer('NDVI (vegetation index)',
+                  'A score from the photo\'s colors that estimates how green and leafy the crop looks. '
+                  'Higher generally means more healthy live leaf cover; low or negative usually means bare soil, dead plants, or stress.'),
+              _metricExplainer('NDRE',
+                  'Similar idea to NDVI, but more sensitive to chlorophyll/nitrogen levels in the leaves - it can catch early nutrient '
+                  'stress that NDVI sometimes misses, before the plant visibly yellows.'),
+              _metricExplainer('Canopy coverage',
+                  'What share of the photo is covered by living plant leaves, as a percentage - the rest is bare soil, shadow, or other.'),
+              _metricExplainer('Canopy vigor',
+                  'A simple good/moderate/low read on how vigorous the visible canopy looks, based on how much of it shows strong, healthy green.'),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+                child: Text(
+                  'Right now these are estimated from an ordinary photo, not a real infrared sensor - treat them as a rough scouting cue, not a precise measurement.',
+                  style: TextStyle(color: Colors.orange.shade900, fontSize: 13),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -249,6 +306,34 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
             ),
             const SizedBox(height: 4),
             Text('Home: ${_flight.homeLatitude.toStringAsFixed(5)}, ${_flight.homeLongitude.toStringAsFixed(5)}'),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(_flight.boundaryPolygon == null
+                      ? 'No survey boundary traced yet'
+                      : 'Boundary: ${_flight.boundaryPolygon!.length} points'),
+                ),
+                TextButton(onPressed: _editBoundary, child: Text(_flight.boundaryPolygon == null ? 'Trace' : 'Edit')),
+              ],
+            ),
+            if (_flight.surveyGoals != null && _flight.surveyGoals!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                children: [
+                  for (final goal in _flight.surveyGoals!)
+                    Chip(
+                      label: Text(goal == 'count' ? 'Count plants/trees' : 'Health analysis'),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
+              ),
+            ],
+            if (_flight.surveyNotes != null && _flight.surveyNotes!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(_flight.surveyNotes!, style: const TextStyle(color: Colors.black54, fontSize: 13)),
+            ],
             if (_flight.weatherTemperatureC != null) ...[
               const SizedBox(height: 12),
               Wrap(
@@ -350,30 +435,60 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
         if (images.isEmpty) return const Text('No photos captured yet');
         return Card(
           child: Column(
-            children: images
-                .map((img) => ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: SizedBox(
-                          width: 48,
-                          height: 48,
-                          child: DroneImageView(flightId: img.flightId, imageId: img.id),
-                        ),
+            children: images.map((img) {
+              final analyzing = DroneAnalysisTracker.instance.isPending(img.id);
+              final subtitleLines = [
+                if (img.analysis != null)
+                  [
+                    plainHealthLabel(img.analysis!.healthStatus),
+                    if (img.analysis!.canopyCoveragePct != null)
+                      '${img.analysis!.canopyCoveragePct!.toStringAsFixed(0)}% coverage',
+                  ].join(' · '),
+                if (img.diagnosis != null)
+                  'AI: ${img.diagnosis!.severity ?? (img.diagnosis!.isHealthy ? 'healthy' : 'needs review')}'
+                  '${img.diagnosis!.estimatedCount != null ? ' · ~${img.diagnosis!.estimatedCount} plants' : ''}',
+                if (analyzing) 'AI analysis running...',
+              ];
+              return ListTile(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: DroneImageView(flightId: img.flightId, imageId: img.id),
+                  ),
+                ),
+                title: Text(img.treeId ?? 'Waypoint ${img.waypointIndex}'),
+                subtitle: subtitleLines.isEmpty ? null : Text(subtitleLines.join('\n')),
+                isThreeLine: subtitleLines.length > 1,
+                onTap: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => DroneImageDetailScreen(image: img)),
+                  );
+                  if (mounted) _refresh();
+                },
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (analyzing)
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                      )
+                    else if (img.diagnosis == null)
+                      IconButton(
+                        icon: const Icon(Icons.auto_awesome, size: 20),
+                        tooltip: 'Analyze with AI',
+                        onPressed: () => _analyzeImage(img),
                       ),
-                      title: Text(img.treeId ?? 'Waypoint ${img.waypointIndex}'),
-                      subtitle: img.analysis == null
-                          ? null
-                          : Text([
-                              plainHealthLabel(img.analysis!.healthStatus),
-                              if (img.analysis!.canopyCoveragePct != null)
-                                '${img.analysis!.canopyCoveragePct!.toStringAsFixed(0)}% coverage',
-                            ].join(' · ')),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        onPressed: () => _deleteImage(img),
-                      ),
-                    ))
-                .toList(),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      onPressed: () => _deleteImage(img),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
           ),
         );
       },

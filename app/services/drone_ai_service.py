@@ -26,9 +26,11 @@ class regardless of which declarative Base defined it, so nothing here
 needed to move onto Universe B's Base either.
 """
 
+import asyncio
 import logging
 import math
 import time
+import uuid
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
@@ -51,7 +53,8 @@ from app.models.drone import (
     DroneImage,
     DroneImageAnalysis,
 )
-from app.models.database import Farm
+from app.models.database import Diagnosis, Farm, FarmInputRecord, FarmYieldRecord
+from app.services.ai_service import ai_service
 from app.services.canopy_overlay_rendering import render_vigor_overlay
 from app.services.canopy_vigor_assessment import assess_canopy_vigor
 from app.services.dji_gsd_estimation import estimate_ground_sampling_distance_cm
@@ -77,14 +80,14 @@ def _safe_float(value: float) -> Optional[float]:
 
 
 def _default_image_uploader(content: bytes, file_name: str, folder: str) -> str:
-    """Real S3 upload (app.services.ai_service.AWSAIService.upload_to_s3) -
-    that method is async (a blocking boto3 call wrapped in async def with no
+    """Real S3 upload (app.services.legacy_ai_service.AWSAIService.upload_to_s3)
+    - that method is async (a blocking boto3 call wrapped in async def with no
     real concurrency benefit, same as the local/Supabase uploaders were
     before this rewrite), so it's bridged here with asyncio.run() rather than
     changing its signature - it's shared with other, still-Universe-A code
     this rewrite doesn't otherwise touch."""
     import asyncio
-    from app.services.ai_service import aws_ai_service
+    from app.services.legacy_ai_service import aws_ai_service
     return asyncio.run(aws_ai_service.upload_to_s3(content, file_name, folder=folder))
 
 
@@ -248,7 +251,8 @@ class DroneAIService:
     def start_manual_flight(
         self, farm_id: int, user_id: int, drone_id: str,
         home_latitude: float, home_longitude: float, home_altitude: float = 0.0,
-        mission_plan: Optional[List[dict]] = None,
+        mission_plan: Optional[List[dict]] = None, boundary_polygon: Optional[List[dict]] = None,
+        survey_goals: Optional[List[str]] = None, survey_notes: Optional[str] = None,
     ) -> DroneFlight:
         """The aircraft is flown manually (e.g. DJI's own app over the RC)
         entirely outside this system - images get pushed in afterward or live
@@ -271,6 +275,9 @@ class DroneAIService:
             home_longitude=home_longitude,
             home_altitude=home_altitude,
             mission_plan=mission_plan,
+            boundary_polygon=boundary_polygon,
+            survey_goals=survey_goals,
+            survey_notes=survey_notes,
             started_at=datetime.utcnow(),
         )
         self.db.add(flight)
@@ -407,16 +414,25 @@ class DroneAIService:
     def update_flight(
         self, flight_id: int, user_id: int,
         drone_id: Optional[str] = None, target_altitude_m: Optional[float] = None,
+        boundary_polygon: Optional[List[dict]] = None,
+        survey_goals: Optional[List[str]] = None, survey_notes: Optional[str] = None,
     ) -> DroneFlight:
-        """Only operational metadata is editable - drone_id (fix a typo)
-        and target_altitude_m. Home coordinates and status are structural/
-        workflow fields, not touched here (status changes go through
-        complete_manual_flight)."""
+        """Only operational metadata is editable - drone_id (fix a typo),
+        target_altitude_m, boundary_polygon (draw/redraw the survey area),
+        and survey_goals/survey_notes. Home coordinates and status are
+        structural/workflow fields, not touched here (status changes go
+        through complete_manual_flight)."""
         flight = self._get_owned_flight_or_raise(flight_id, user_id)
         if drone_id is not None:
             flight.drone_id = drone_id
         if target_altitude_m is not None:
             flight.target_altitude_m = target_altitude_m
+        if boundary_polygon is not None:
+            flight.boundary_polygon = boundary_polygon
+        if survey_goals is not None:
+            flight.survey_goals = survey_goals
+        if survey_notes is not None:
+            flight.survey_notes = survey_notes
         self.db.commit()
         self.db.refresh(flight)
         return flight
@@ -463,6 +479,124 @@ class DroneAIService:
                 detail="This image isn't stored locally - serving non-local storage isn't implemented yet",
             )
         return analysis.overlay_url.removeprefix("file://")
+
+    def _build_farm_context(self, farm_id: int) -> Optional[str]:
+        """Summarizes the farm's own recent input-log and yield-tracking
+        entries (app.models.database.FarmInputRecord/FarmYieldRecord) into
+        plain text for AIService.analyze_drone_photo()'s prompt - e.g. a
+        recent fungicide application or an expected-yield figure changes how
+        a photo should be read, and this is the one place the farmer has
+        already recorded that. Returns None (not an empty string) when there's
+        nothing on file, so the caller can skip the prompt section entirely."""
+        inputs = list(self.db.execute(
+            select(FarmInputRecord)
+            .where(FarmInputRecord.farm_id == farm_id, FarmInputRecord.is_deleted.is_(False))
+            .order_by(FarmInputRecord.entry_date.desc())
+            .limit(5)
+        ).scalars().all())
+        yields = list(self.db.execute(
+            select(FarmYieldRecord)
+            .where(FarmYieldRecord.farm_id == farm_id, FarmYieldRecord.is_deleted.is_(False))
+            .order_by(FarmYieldRecord.id.desc())
+            .limit(3)
+        ).scalars().all())
+
+        if not inputs and not yields:
+            return None
+
+        lines = []
+        if inputs:
+            lines.append("Recent farm input log entries:")
+            for r in inputs:
+                verb = "Bought" if r.entry_type == "purchase" else "Applied"
+                qty = f" ({r.quantity} {r.unit})" if r.quantity else ""
+                lines.append(f"- {r.entry_date}: {verb} {r.item_name}{qty}")
+        if yields:
+            lines.append("Recent yield records for this farm:")
+            for y in yields:
+                bits = [f"{y.crop} ({y.season_label})"]
+                if y.expected_yield_kg:
+                    bits.append(f"expected {y.expected_yield_kg:.0f} kg")
+                if y.actual_yield_kg:
+                    bits.append(f"actual {y.actual_yield_kg:.0f} kg")
+                lines.append("- " + ", ".join(bits))
+        return "\n".join(lines)
+
+    def analyze_image(self, flight_id: int, image_id: int, user_id: int) -> DroneImage:
+        """On-demand deep AI read of one captured photo (Kimi/whichever
+        LLM_PROVIDER is configured - see app.services.ai_service), separate
+        from the always-on, free, local NDVI/vigor analysis in
+        ingest_captured_image(). Deliberately not automatic per photo: this
+        is a real network call to a remote model (~15-20s, and a real cost
+        against the configured provider), so the farmer opts in per photo
+        that's actually worth the wait.
+
+        Steered by the flight's survey_goals ("count" and/or "health" - see
+        app.models.drone.DroneFlight.survey_goals) and survey_notes, plus the
+        farm's own recent input/yield history via _build_farm_context().
+        Persists a real Diagnosis row (the same Universe B model
+        app/api/diagnoses.py uses) and finally sets DroneImage.diagnosis_id -
+        that FK has existed since the Universe B migration but nothing ever
+        populated it (see app/api/drones.py's _build_disease_answer)."""
+        flight = self._get_owned_flight_or_raise(flight_id, user_id)
+        image = self.db.execute(
+            select(DroneImage).where(DroneImage.id == image_id, DroneImage.flight_id == flight_id)
+        ).scalar_one_or_none()
+        if image is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+        if not image.rgb_url or not image.rgb_url.startswith("file://"):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="This image isn't stored locally - AI analysis of non-local storage isn't implemented yet",
+            )
+        local_path = image.rgb_url.removeprefix("file://")
+
+        result = asyncio.run(ai_service.analyze_drone_photo(
+            image_url=local_path,
+            survey_goals=flight.survey_goals,
+            survey_notes=flight.survey_notes,
+            farm_context=self._build_farm_context(flight.farm_id),
+        ))
+
+        if not result.get("success"):
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "AI analysis failed"))
+
+        # Diagnosis.primary_diagnosis is VARCHAR(300) - the model (especially
+        # with survey_notes context folded in) often writes a full paragraph
+        # rather than a short label, so the untruncated text is kept in
+        # treatment_plan (JSONB, unlimited) alongside estimated_count/
+        # count_notes rather than lost.
+        full_diagnosis = result.get("primary_diagnosis") or ""
+        diagnosis = Diagnosis(
+            uuid=uuid.uuid4(),
+            diagnosis_id=f"DX-{uuid.uuid4().hex[:12]}",
+            user_id=user_id,
+            farm_id=flight.farm_id,
+            request_payload={"source": "drone_image", "flight_id": flight_id, "image_id": image_id},
+            permit_token_id="unpaid-dev",
+            image_urls=[local_path],
+            status="completed",
+            completed_at=datetime.utcnow(),
+            primary_diagnosis=full_diagnosis[:297] + "..." if len(full_diagnosis) > 300 else full_diagnosis,
+            disease_category=result.get("category"),
+            confidence_score=result.get("confidence_score"),
+            severity_level=result.get("severity_level"),
+            affected_area_percentage=result.get("affected_area_percentage"),
+            treatment_plan={
+                "full_diagnosis": full_diagnosis,
+                "estimated_count": result.get("estimated_count"),
+                "count_notes": result.get("count_notes"),
+            },
+            immediate_actions=result.get("treatment_recommendations", []),
+            preventive_measures=result.get("preventive_measures", []),
+            model_version=result.get("ai_model_version"),
+        )
+        self.db.add(diagnosis)
+        self.db.flush()
+        image.diagnosis_id = diagnosis.id
+        self.db.commit()
+        self.db.refresh(image)
+        return image
 
     def _get_local_path(self, flight_id: int, image_id: int, user_id: int, field: str) -> str:
         self._get_owned_flight_or_raise(flight_id, user_id)

@@ -51,12 +51,28 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
     if (created != null) setState(_loadYields);
   }
 
-  Future<void> _deleteInput(FarmInputRecord record) async {
+  Future<bool> _deleteInput(FarmInputRecord record) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete input record?'),
+        content: Text('This removes the "${record.itemName}" entry. This can\'t be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
     try {
       await FarmInputRepository.instance.deleteInputRecord(widget.farmId, record.id);
-      setState(_loadInputs);
+      return true;
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
     }
   }
 
@@ -274,7 +290,8 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
                     padding: const EdgeInsets.only(right: 20),
                     child: const Icon(Icons.delete, color: Colors.white),
                   ),
-                  onDismissed: (_) => _deleteInput(record),
+                  confirmDismiss: (_) => _deleteInput(record),
+                  onDismissed: (_) => setState(_loadInputs),
                   child: Card(
                     child: ListTile(
                       leading: Icon(record.entryType == 'purchase' ? Icons.shopping_cart : Icons.grass),
@@ -284,7 +301,19 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
                         if (record.quantity != null) '${record.quantity} ${record.unit ?? ''}'.trim(),
                         '${record.entryDate.year}-${record.entryDate.month.toString().padLeft(2, '0')}-${record.entryDate.day.toString().padLeft(2, '0')}',
                       ].join(' · ')),
-                      trailing: record.costKsh != null ? Text('KSh ${record.costKsh!.toStringAsFixed(0)}') : null,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (record.costKsh != null) Text('KSh ${record.costKsh!.toStringAsFixed(0)}'),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 20),
+                            onPressed: () async {
+                              final deleted = await _deleteInput(record);
+                              if (deleted) setState(_loadInputs);
+                            },
+                          ),
+                        ],
+                      ),
                       onTap: () => _editInput(record),
                     ),
                   ),

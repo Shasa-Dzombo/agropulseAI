@@ -36,6 +36,32 @@ class FarmInputRepository {
     return FarmInputList.fromJson(json as Map<String, dynamic>);
   }
 
+  /// Correct a mistyped entry - partial update, only supplied fields change.
+  Future<FarmInputRecord> editInputRecord(
+    int farmId,
+    int recordId, {
+    String? entryType,
+    String? category,
+    String? itemName,
+    double? quantity,
+    String? unit,
+    double? costKsh,
+    String? notes,
+    DateTime? entryDate,
+  }) async {
+    final json = await _api.patch('/farms/$farmId/inputs/$recordId', auth: true, body: {
+      'entry_type': ?entryType,
+      'category': ?category,
+      'item_name': ?itemName,
+      'quantity': ?quantity,
+      'unit': ?unit,
+      'cost_ksh': ?costKsh,
+      'notes': ?notes,
+      'entry_date': ?entryDate?.toIso8601String().split('T').first,
+    });
+    return FarmInputRecord.fromJson(json as Map<String, dynamic>);
+  }
+
   Future<void> deleteInputRecord(int farmId, int recordId) async {
     await _api.delete('/farms/$farmId/inputs/$recordId', auth: true);
   }
@@ -102,5 +128,9 @@ class FarmInputRepository {
   Future<List<String>> getYieldTips(int farmId, int recordId) async {
     final json = await _api.get('/farms/$farmId/yields/$recordId/tips', auth: true);
     return (json as List).cast<String>();
+  }
+
+  Future<void> deleteYieldRecord(int farmId, int recordId) async {
+    await _api.delete('/farms/$farmId/yields/$recordId', auth: true);
   }
 }

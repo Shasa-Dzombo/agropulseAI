@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
+import 'farm_input_models.dart';
 import 'farm_input_repository.dart';
 
 const _categories = ['seed', 'fertilizer', 'pesticide', 'labor', 'other'];
 
 class FarmInputCreateScreen extends StatefulWidget {
   final int farmId;
+  /// When set, the screen edits this record instead of creating a new one.
+  final FarmInputRecord? existing;
 
-  const FarmInputCreateScreen({super.key, required this.farmId});
+  const FarmInputCreateScreen({super.key, required this.farmId, this.existing});
 
   @override
   State<FarmInputCreateScreen> createState() => _FarmInputCreateScreenState();
@@ -16,15 +19,17 @@ class FarmInputCreateScreen extends StatefulWidget {
 
 class _FarmInputCreateScreenState extends State<FarmInputCreateScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _itemNameController = TextEditingController();
-  final _quantityController = TextEditingController();
-  final _unitController = TextEditingController();
-  final _costController = TextEditingController();
-  final _notesController = TextEditingController();
-  String _entryType = 'purchase';
-  String _category = 'fertilizer';
-  DateTime _entryDate = DateTime.now();
+  late final _itemNameController = TextEditingController(text: widget.existing?.itemName);
+  late final _quantityController = TextEditingController(text: widget.existing?.quantity?.toString());
+  late final _unitController = TextEditingController(text: widget.existing?.unit);
+  late final _costController = TextEditingController(text: widget.existing?.costKsh?.toString());
+  late final _notesController = TextEditingController(text: widget.existing?.notes);
+  late String _entryType = widget.existing?.entryType ?? 'purchase';
+  late String _category = widget.existing?.category ?? 'fertilizer';
+  late DateTime _entryDate = widget.existing?.entryDate ?? DateTime.now();
   bool _saving = false;
+
+  bool get _isEditing => widget.existing != null;
 
   @override
   void dispose() {
@@ -52,17 +57,29 @@ class _FarmInputCreateScreenState extends State<FarmInputCreateScreen> {
     try {
       final quantity = _quantityController.text.trim();
       final cost = _costController.text.trim();
-      final record = await FarmInputRepository.instance.createInputRecord(
-        widget.farmId,
-        entryType: _entryType,
-        category: _category,
-        itemName: _itemNameController.text.trim(),
-        quantity: quantity.isEmpty ? null : double.parse(quantity),
-        unit: _unitController.text.trim().isEmpty ? null : _unitController.text.trim(),
-        costKsh: (_entryType == 'purchase' && cost.isNotEmpty) ? double.parse(cost) : null,
-        notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
-        entryDate: _entryDate,
-      );
+      final record = _isEditing
+          ? await FarmInputRepository.instance.editInputRecord(
+              widget.farmId, widget.existing!.id,
+              entryType: _entryType,
+              category: _category,
+              itemName: _itemNameController.text.trim(),
+              quantity: quantity.isEmpty ? null : double.parse(quantity),
+              unit: _unitController.text.trim().isEmpty ? null : _unitController.text.trim(),
+              costKsh: (_entryType == 'purchase' && cost.isNotEmpty) ? double.parse(cost) : null,
+              notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+              entryDate: _entryDate,
+            )
+          : await FarmInputRepository.instance.createInputRecord(
+              widget.farmId,
+              entryType: _entryType,
+              category: _category,
+              itemName: _itemNameController.text.trim(),
+              quantity: quantity.isEmpty ? null : double.parse(quantity),
+              unit: _unitController.text.trim().isEmpty ? null : _unitController.text.trim(),
+              costKsh: (_entryType == 'purchase' && cost.isNotEmpty) ? double.parse(cost) : null,
+              notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+              entryDate: _entryDate,
+            );
       if (!mounted) return;
       Navigator.of(context).pop(record);
     } on ApiException catch (e) {
@@ -79,7 +96,7 @@ class _FarmInputCreateScreenState extends State<FarmInputCreateScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Log an input')),
+      appBar: AppBar(title: Text(_isEditing ? 'Edit input' : 'Log an input')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

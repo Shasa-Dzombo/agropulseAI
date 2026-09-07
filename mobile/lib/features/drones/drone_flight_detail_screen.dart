@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_exception.dart';
 import 'drone_image_capture_screen.dart';
+import 'drone_image_view.dart';
 import 'drone_models.dart';
 import 'drone_repository.dart';
 
@@ -62,11 +63,60 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
     }
   }
 
+  Future<void> _editDroneId() async {
+    final controller = TextEditingController(text: _flight.droneId);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit drone name'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Drone ID / name')),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(controller.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == _flight.droneId) return;
+    try {
+      final updated = await DroneRepository.instance.updateFlight(_flight.id, droneId: newName);
+      if (mounted) setState(() => _flight = updated);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _deleteImage(DroneImage image) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete photo?'),
+        content: const Text('This removes the photo and its analysis. This can\'t be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await DroneRepository.instance.deleteImage(_flight.id, image.id);
+      _refresh();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final inProgress = _flight.status == 'in_progress';
     return Scaffold(
-      appBar: AppBar(title: Text('Flight · ${_flight.droneId}')),
+      appBar: AppBar(
+        title: Text('Flight · ${_flight.droneId}'),
+        actions: [IconButton(icon: const Icon(Icons.edit_outlined), onPressed: _editDroneId)],
+      ),
       floatingActionButton: inProgress
           ? FloatingActionButton.extended(
               onPressed: _capturePhoto,
@@ -302,7 +352,14 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
           child: Column(
             children: images
                 .map((img) => ListTile(
-                      leading: const Icon(Icons.image),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: DroneImageView(flightId: img.flightId, imageId: img.id),
+                        ),
+                      ),
                       title: Text(img.treeId ?? 'Waypoint ${img.waypointIndex}'),
                       subtitle: img.analysis == null
                           ? null
@@ -311,6 +368,10 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
                               if (img.analysis!.canopyCoveragePct != null)
                                 '${img.analysis!.canopyCoveragePct!.toStringAsFixed(0)}% coverage',
                             ].join(' · ')),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: () => _deleteImage(img),
+                      ),
                     ))
                 .toList(),
           ),

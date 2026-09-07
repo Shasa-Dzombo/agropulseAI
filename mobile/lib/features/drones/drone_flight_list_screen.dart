@@ -32,7 +32,7 @@ class _DroneFlightListScreenState extends State<DroneFlightListScreen> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _future = DroneRepository.instance.listFlights(widget.farmId));
+    setState(() { _future = DroneRepository.instance.listFlights(widget.farmId); });
     await _future;
   }
 
@@ -58,6 +58,31 @@ class _DroneFlightListScreenState extends State<DroneFlightListScreen> {
       MaterialPageRoute(builder: (_) => DroneFlightDetailScreen(flight: flight)),
     );
     _refresh();
+  }
+
+  Future<bool> _confirmDeleteFlight(DroneFlight flight) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete flight?'),
+        content: Text('This removes "${flight.droneId}" and all its captured photos and analysis. This can\'t be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+    try {
+      await DroneRepository.instance.deleteFlight(flight.id);
+      return true;
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    }
   }
 
   Color _statusColor(String status) {
@@ -124,18 +149,30 @@ class _DroneFlightListScreenState extends State<DroneFlightListScreen> {
             separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final flight = flights[index];
-              return ListTile(
-                leading: const Icon(Icons.flight),
-                title: Text(flight.droneId),
-                subtitle: Text(flight.startedAt == null
-                    ? flight.status
-                    : '${flight.startedAt!.year}-${flight.startedAt!.month.toString().padLeft(2, '0')}-${flight.startedAt!.day.toString().padLeft(2, '0')}'),
-                trailing: Chip(
-                  label: Text(flight.status.replaceAll('_', ' ')),
-                  backgroundColor: _statusColor(flight.status).withValues(alpha: 0.15),
-                  labelStyle: TextStyle(color: _statusColor(flight.status)),
+              return Dismissible(
+                key: ValueKey(flight.id),
+                direction: DismissDirection.endToStart,
+                confirmDismiss: (_) => _confirmDeleteFlight(flight),
+                onDismissed: (_) => _refresh(),
+                background: Container(
+                  color: Colors.red,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  child: const Icon(Icons.delete, color: Colors.white),
                 ),
-                onTap: () => _openDetail(flight),
+                child: ListTile(
+                  leading: const Icon(Icons.flight),
+                  title: Text(flight.droneId),
+                  subtitle: Text(flight.startedAt == null
+                      ? flight.status
+                      : '${flight.startedAt!.year}-${flight.startedAt!.month.toString().padLeft(2, '0')}-${flight.startedAt!.day.toString().padLeft(2, '0')}'),
+                  trailing: Chip(
+                    label: Text(flight.status.replaceAll('_', ' ')),
+                    backgroundColor: _statusColor(flight.status).withValues(alpha: 0.15),
+                    labelStyle: TextStyle(color: _statusColor(flight.status)),
+                  ),
+                  onTap: () => _openDetail(flight),
+                ),
               );
             },
           ),

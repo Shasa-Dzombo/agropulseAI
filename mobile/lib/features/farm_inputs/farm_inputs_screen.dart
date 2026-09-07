@@ -60,6 +60,37 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
     }
   }
 
+  Future<void> _editInput(FarmInputRecord record) async {
+    final updated = await Navigator.of(context).push<FarmInputRecord>(
+      MaterialPageRoute(builder: (_) => FarmInputCreateScreen(farmId: widget.farmId, existing: record)),
+    );
+    if (updated != null) setState(_loadInputs);
+  }
+
+  Future<void> _deleteYield(FarmYieldRecord record) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete yield record?'),
+        content: Text('This removes the "${record.crop} · ${record.seasonLabel}" record. This can\'t be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await FarmInputRepository.instance.deleteYieldRecord(widget.farmId, record.id);
+      setState(_loadYields);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   Future<void> _recordHarvest(FarmYieldRecord record) async {
     final actualController = TextEditingController();
     DateTime harvestDate = DateTime.now();
@@ -254,6 +285,7 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
                         '${record.entryDate.year}-${record.entryDate.month.toString().padLeft(2, '0')}-${record.entryDate.day.toString().padLeft(2, '0')}',
                       ].join(' · ')),
                       trailing: record.costKsh != null ? Text('KSh ${record.costKsh!.toStringAsFixed(0)}') : null,
+                      onTap: () => _editInput(record),
                     ),
                   ),
                 ),
@@ -297,6 +329,7 @@ class _FarmInputsScreenState extends State<FarmInputsScreen> with SingleTickerPr
                   record: record,
                   onRecordHarvest: () => _recordHarvest(record),
                   onEdit: () => _editYield(record),
+                  onDelete: () => _deleteYield(record),
                 ),
             ],
           );
@@ -311,8 +344,15 @@ class _YieldCard extends StatefulWidget {
   final FarmYieldRecord record;
   final VoidCallback onRecordHarvest;
   final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  const _YieldCard({required this.farmId, required this.record, required this.onRecordHarvest, required this.onEdit});
+  const _YieldCard({
+    required this.farmId,
+    required this.record,
+    required this.onRecordHarvest,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   @override
   State<_YieldCard> createState() => _YieldCardState();
@@ -340,6 +380,7 @@ class _YieldCardState extends State<_YieldCard> {
               children: [
                 Expanded(child: Text('${record.crop} · ${record.seasonLabel}', style: Theme.of(context).textTheme.titleMedium)),
                 IconButton(icon: const Icon(Icons.edit_outlined, size: 20), onPressed: widget.onEdit),
+                IconButton(icon: const Icon(Icons.delete_outline, size: 20), onPressed: widget.onDelete),
               ],
             ),
             const SizedBox(height: 4),

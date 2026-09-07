@@ -27,7 +27,7 @@ class _FarmDetailScreenState extends State<FarmDetailScreen> {
   }
 
   void _retry() {
-    setState(() => _weatherFuture = FarmRepository.instance.getFarmWeather(widget.farm.id));
+    setState(() { _weatherFuture = FarmRepository.instance.getFarmWeather(widget.farm.id); });
   }
 
   Future<void> _confirmDelete() async {

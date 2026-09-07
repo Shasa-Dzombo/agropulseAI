@@ -404,6 +404,92 @@ class DroneAIService:
     def get_flight(self, flight_id: int, user_id: int) -> DroneFlight:
         return self._get_owned_flight_or_raise(flight_id, user_id)
 
+    def update_flight(
+        self, flight_id: int, user_id: int,
+        drone_id: Optional[str] = None, target_altitude_m: Optional[float] = None,
+    ) -> DroneFlight:
+        """Only operational metadata is editable - drone_id (fix a typo)
+        and target_altitude_m. Home coordinates and status are structural/
+        workflow fields, not touched here (status changes go through
+        complete_manual_flight)."""
+        flight = self._get_owned_flight_or_raise(flight_id, user_id)
+        if drone_id is not None:
+            flight.drone_id = drone_id
+        if target_altitude_m is not None:
+            flight.target_altitude_m = target_altitude_m
+        self.db.commit()
+        self.db.refresh(flight)
+        return flight
+
+    def delete_flight(self, flight_id: int, user_id: int) -> None:
+        """Hard delete - DroneFlight has no soft-delete support (see the
+        farm-delete cascade in app/api/farms.py, which hard-deletes flights
+        for the same reason). Images/analyses cascade automatically via
+        their own ondelete="CASCADE" FKs."""
+        flight = self._get_owned_flight_or_raise(flight_id, user_id)
+        self.db.delete(flight)
+        self.db.commit()
+
+    def delete_image(self, flight_id: int, image_id: int, user_id: int) -> None:
+        self._get_owned_flight_or_raise(flight_id, user_id)
+        image = self.db.execute(
+            select(DroneImage).where(DroneImage.id == image_id, DroneImage.flight_id == flight_id)
+        ).scalar_one_or_none()
+        if image is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+        self.db.delete(image)
+        self.db.commit()
+
+    def get_image_local_path(self, flight_id: int, image_id: int, user_id: int) -> str:
+        """Real local-disk filesystem path for a captured photo, ownership-
+        checked the same as every other drone endpoint. Only meaningful when
+        DRONE_IMAGE_STORAGE=local (rgb_url is a file:// URL) - see
+        app/api/drones.py's get_image_rgb, which is the only caller and the
+        only place that needs to know about the file:// scheme."""
+        return self._get_local_path(flight_id, image_id, user_id, field="rgb_url")
+
+    def get_overlay_local_path(self, flight_id: int, image_id: int, user_id: int) -> str:
+        """Same as get_image_local_path but for the annotated overlay
+        (canopy boundary traced, low-vigor areas boxed - see
+        app.services.canopy_overlay_rendering). Can be None even when the
+        image itself exists (overlay render/upload failures never block
+        ingestion), unlike rgb_url which is always present."""
+        analysis = self._get_owned_analysis_or_raise(flight_id, image_id, user_id)
+        if not analysis.overlay_url:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No overlay available for this image")
+        if not analysis.overlay_url.startswith("file://"):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="This image isn't stored locally - serving non-local storage isn't implemented yet",
+            )
+        return analysis.overlay_url.removeprefix("file://")
+
+    def _get_local_path(self, flight_id: int, image_id: int, user_id: int, field: str) -> str:
+        self._get_owned_flight_or_raise(flight_id, user_id)
+        image = self.db.execute(
+            select(DroneImage).where(DroneImage.id == image_id, DroneImage.flight_id == flight_id)
+        ).scalar_one_or_none()
+        url = getattr(image, field, None) if image else None
+        if not url:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+        if not url.startswith("file://"):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="This image isn't stored locally - serving non-local storage isn't implemented yet",
+            )
+        return url.removeprefix("file://")
+
+    def _get_owned_analysis_or_raise(self, flight_id: int, image_id: int, user_id: int) -> DroneImageAnalysis:
+        self._get_owned_flight_or_raise(flight_id, user_id)
+        analysis = self.db.execute(
+            select(DroneImageAnalysis)
+            .join(DroneImage, DroneImage.id == DroneImageAnalysis.image_id)
+            .where(DroneImage.id == image_id, DroneImage.flight_id == flight_id)
+        ).scalar_one_or_none()
+        if analysis is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+        return analysis
+
     def list_flights(self, farm_id: int, user_id: int) -> List[DroneFlight]:
         farm = self.db.execute(
             select(Farm).where(Farm.id == farm_id, Farm.owner_id == user_id)

@@ -28,8 +28,8 @@ from app.db_config import get_production_db_dependency
 from app.models.database import Farm, FarmInputRecord, FarmYieldRecord
 from app.schemas.farm_input import (
     FarmInputListResponse, FarmInputRecordCreateRequest, FarmInputRecordResponse,
-    FarmYieldListResponse, FarmYieldRecordCreateRequest, FarmYieldRecordResponse,
-    FarmYieldRecordUpdateRequest,
+    FarmInputRecordUpdateRequest, FarmYieldListResponse, FarmYieldRecordCreateRequest,
+    FarmYieldRecordResponse, FarmYieldRecordUpdateRequest,
 )
 from app.services.weather_service import get_openweather_client, fetch_weather_snapshot
 from app.services.yield_estimation import estimate_yield_kg, kalro_variety_tip
@@ -104,6 +104,34 @@ async def list_input_records(
     records = db.execute(query.order_by(FarmInputRecord.entry_date.desc())).scalars().all()
     total_cost = sum((r.cost_ksh for r in records if r.cost_ksh is not None), Decimal("0"))
     return FarmInputListResponse(items=records, total_cost_ksh=total_cost)
+
+
+@router.patch("/inputs/{record_id}", response_model=FarmInputRecordResponse)
+async def update_input_record(
+    farm_id: int,
+    record_id: int,
+    request: FarmInputRecordUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Correct a mistyped entry - see FarmInputRecordUpdateRequest."""
+    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    record = db.execute(
+        select(FarmInputRecord).where(FarmInputRecord.id == record_id, FarmInputRecord.farm_id == farm_id)
+    ).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Input record not found")
+
+    data = request.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        setattr(record, field, value)
+    # cost_ksh is purchase-specific, same rule as creation.
+    if record.entry_type == "application":
+        record.cost_ksh = None
+
+    db.commit()
+    db.refresh(record)
+    return record
 
 
 @router.delete("/inputs/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -199,6 +227,23 @@ async def update_yield_record(
     db.commit()
     db.refresh(record)
     return _to_yield_response(record, farm)
+
+
+@router.delete("/yields/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_yield_record(
+    farm_id: int,
+    record_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    record = db.execute(
+        select(FarmYieldRecord).where(FarmYieldRecord.id == record_id, FarmYieldRecord.farm_id == farm_id)
+    ).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Yield record not found")
+    record.soft_delete()
+    db.commit()
 
 
 @router.get("/yields/{record_id}/tips", response_model=List[str])

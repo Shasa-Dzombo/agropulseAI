@@ -94,6 +94,10 @@ class DroneImageAnalysis {
   final String? vigorLevel;
   final List<String> stressIndicators;
   final List<String> vigorIndicators;
+  // Whether app/services/canopy_overlay_rendering produced an annotated
+  // copy of the photo - never guaranteed (render/upload failures never
+  // block ingestion), so check this before trying to load one.
+  final bool hasOverlay;
 
   DroneImageAnalysis({
     required this.ndvi,
@@ -103,6 +107,7 @@ class DroneImageAnalysis {
     required this.vigorLevel,
     required this.stressIndicators,
     required this.vigorIndicators,
+    required this.hasOverlay,
   });
 
   factory DroneImageAnalysis.fromJson(Map<String, dynamic> json) => DroneImageAnalysis(
@@ -111,27 +116,29 @@ class DroneImageAnalysis {
         stressLevel: json['stress_level'] as String?,
         canopyCoveragePct: (json['canopy_coverage_pct'] as num?)?.toDouble(),
         vigorLevel: json['vigor_level'] as String?,
+        hasOverlay: json['overlay_url'] != null,
         stressIndicators: (json['stress_indicators'] as List?)?.cast<String>() ?? const [],
         vigorIndicators: (json['vigor_indicators'] as List?)?.cast<String>() ?? const [],
       );
 }
 
-/// Mirrors app/schemas/drone.py's DroneImageResponse. rgb_url/nir_url are
-/// backend-local file:// paths (see app/services/local_image_storage.py) -
-/// there's no static file mount serving local_uploads/ over HTTP, so they
-/// can't be loaded as network images here. Deliberately not modeled/shown -
-/// same constraint as diagnosis images, whose result screen also only shows
-/// the AI's text findings, not the photo. nir_url's presence IS modeled
-/// (as hasRealNir, not the url itself): the backend only sets it when a real
-/// infrared file was uploaded alongside the RGB photo. The mobile capture
-/// flow never sends one, so hasRealNir is currently always false here - NDVI
-/// on every photo taken through this app is approximated from the RGB
-/// green channel (see app/drones/flight/camera.py's
+/// Mirrors app/schemas/drone.py's DroneImageResponse. rgb_url/nir_url
+/// themselves are backend-local file:// paths (see
+/// app/services/local_image_storage.py) and stay unmodeled here - but the
+/// actual photo/overlay bytes ARE viewable, via the ownership-checked
+/// GET /drones/flights/{flightId}/images/{id}/rgb|overlay endpoints (see
+/// DroneImageView) rather than the raw file:// URL. nir_url's presence IS
+/// modeled (as hasRealNir, not the url itself): the backend only sets it
+/// when a real infrared file was uploaded alongside the RGB photo. The
+/// mobile capture flow never sends one, so hasRealNir is currently always
+/// false here - NDVI on every photo taken through this app is approximated
+/// from the RGB green channel (see app/drones/flight/camera.py's
 /// green_channel_as_nir_placeholder), not a real infrared reading. The
 /// result screen uses this to show an honest caveat instead of stating
 /// "dead"/a precise NDVI number with false confidence.
 class DroneImage {
   final int id;
+  final int flightId;
   final int waypointIndex;
   final String? treeId;
   final DroneImageAnalysis? analysis;
@@ -140,6 +147,7 @@ class DroneImage {
 
   DroneImage({
     required this.id,
+    required this.flightId,
     required this.waypointIndex,
     required this.treeId,
     required this.analysis,
@@ -149,6 +157,7 @@ class DroneImage {
 
   factory DroneImage.fromJson(Map<String, dynamic> json) => DroneImage(
         id: json['id'] as int,
+        flightId: json['flight_id'] as int,
         waypointIndex: json['waypoint_index'] as int,
         treeId: json['tree_id'] as String?,
         analysis: json['analysis'] == null ? null : DroneImageAnalysis.fromJson(json['analysis'] as Map<String, dynamic>),

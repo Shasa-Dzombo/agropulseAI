@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.db_config import get_production_db_dependency
 from app.models.diagnosis import Diagnosis, DiseaseCategory
@@ -13,7 +14,7 @@ from app.schemas.drone import (
     DroneImageAnalysisResponse, FlightAnalysisSummary, DiseaseAnswer,
     FarmWeatherResponse, WeatherSnapshotOut, FlightConditionOut,
     DiseasePressureOut, AgriculturalAlertOut,
-    CreateManualFlightRequest, CompleteFlightRequest, KmlWaypointsResponse,
+    CreateManualFlightRequest, CompleteFlightRequest, KmlWaypointsResponse, UpdateFlightRequest,
 )
 from app.api.auth import get_current_user
 from app.config import settings
@@ -249,6 +250,78 @@ def get_flight(
     service = DroneAIService(db)
     flight = service.get_flight(flight_id, current_user["id"])
     return DroneFlightResponse.model_validate(flight)
+
+
+@router.patch("/flights/{flight_id}", response_model=DroneFlightResponse)
+def update_flight(
+    flight_id: int,
+    request: UpdateFlightRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Edit operational metadata (drone_id, target_altitude_m) - see
+    DroneAIService.update_flight() for what's deliberately not editable."""
+    service = DroneAIService(db)
+    flight = service.update_flight(
+        flight_id, current_user["id"],
+        drone_id=request.drone_id, target_altitude_m=request.target_altitude_m,
+    )
+    return DroneFlightResponse.model_validate(flight)
+
+
+@router.delete("/flights/{flight_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_flight(
+    flight_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Hard delete - see DroneAIService.delete_flight()."""
+    service = DroneAIService(db)
+    service.delete_flight(flight_id, current_user["id"])
+
+
+@router.delete("/flights/{flight_id}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_flight_image(
+    flight_id: int,
+    image_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    service = DroneAIService(db)
+    service.delete_image(flight_id, image_id, current_user["id"])
+
+
+@router.get("/flights/{flight_id}/images/{image_id}/rgb")
+def get_image_rgb(
+    flight_id: int,
+    image_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Streams the actual captured photo - rgb_url is a backend-local
+    file:// path (app/services/local_image_storage.py), unreachable from a
+    phone directly, so this is the ownership-checked way to actually view
+    one. Same Bearer-token auth as every other endpoint here - mobile's
+    Image.network call passes it as a request header (see
+    DroneImageCard/DroneRepository.imageUrl on the mobile side)."""
+    service = DroneAIService(db)
+    path = service.get_image_local_path(flight_id, image_id, current_user["id"])
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.get("/flights/{flight_id}/images/{image_id}/overlay")
+def get_image_overlay(
+    flight_id: int,
+    image_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Streams the annotated overlay (canopy boundary + low-vigor boxes) -
+    see get_image_rgb's docstring, same idea. 404 when no overlay was
+    rendered for this image (see DroneImageAnalysis.overlay_url)."""
+    service = DroneAIService(db)
+    path = service.get_overlay_local_path(flight_id, image_id, current_user["id"])
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.get("/flights/{flight_id}/images", response_model=List[DroneImageResponse])

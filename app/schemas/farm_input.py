@@ -17,6 +17,19 @@ class FarmInputRecordCreateRequest(BaseModel):
     entry_date: date
 
 
+class FarmInputRecordUpdateRequest(BaseModel):
+    """Partial update - correct a typo'd item name, wrong cost, wrong date,
+    etc. Every field optional; only supplied ones change."""
+    entry_type: Optional[str] = Field(None, pattern="^(purchase|application)$")
+    category: Optional[str] = Field(None, pattern="^(seed|fertilizer|pesticide|labor|other)$")
+    item_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    quantity: Optional[float] = Field(None, gt=0)
+    unit: Optional[str] = Field(None, max_length=50)
+    cost_ksh: Optional[Decimal] = Field(None, ge=0)
+    notes: Optional[str] = None
+    entry_date: Optional[date] = None
+
+
 class FarmInputRecordResponse(BaseModel):
     id: int
     farm_id: int

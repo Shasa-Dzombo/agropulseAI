@@ -42,6 +42,13 @@ class CreateManualFlightRequest(BaseModel):
     mission_plan: Optional[List[WaypointIn]] = None
 
 
+class UpdateFlightRequest(BaseModel):
+    """Only operational metadata is editable - see
+    DroneAIService.update_flight()."""
+    drone_id: Optional[str] = None
+    target_altitude_m: Optional[float] = None
+
+
 class CompleteFlightRequest(BaseModel):
     status: Literal["completed", "aborted"]
     error_message: Optional[str] = None

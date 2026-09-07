@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/api_exception.dart';
+import 'drone_image_view.dart';
 import 'drone_models.dart';
 import 'drone_repository.dart';
 
@@ -76,9 +77,11 @@ class _DroneImageCaptureScreenState extends State<DroneImageCaptureScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: _image == null
-                      ? const Center(child: Icon(Icons.flight_takeoff, size: 64))
-                      : Image.file(File(_image!.path), fit: BoxFit.cover),
+                  child: _result != null && _result!.analysis?.hasOverlay == true
+                      ? DroneImageView(flightId: _result!.flightId, imageId: _result!.id, overlay: true)
+                      : _image == null
+                          ? const Center(child: Icon(Icons.flight_takeoff, size: 64))
+                          : Image.file(File(_image!.path), fit: BoxFit.cover),
                 ),
               ),
               const SizedBox(height: 16),
@@ -149,6 +152,13 @@ class _DroneImageCaptureScreenState extends State<DroneImageCaptureScreen> {
                 Text('Analyzed', style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
+            if (analysis?.hasOverlay == true) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Photo above is annotated: green traces the detected canopy, red boxes mark low-vigor areas.',
+                style: TextStyle(color: Colors.black54, fontSize: 12),
+              ),
+            ],
             if (!image.hasRealNir) ...[
               const SizedBox(height: 12),
               Container(

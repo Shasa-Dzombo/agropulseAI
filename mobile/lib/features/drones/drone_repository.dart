@@ -41,6 +41,24 @@ class DroneRepository {
     return DroneFlight.fromJson(json as Map<String, dynamic>);
   }
 
+  /// Only operational metadata is editable - see UpdateFlightRequest on
+  /// the backend for why (home coordinates/status aren't touched here).
+  Future<DroneFlight> updateFlight(int flightId, {String? droneId, double? targetAltitudeM}) async {
+    final json = await _api.patch('/drones/flights/$flightId', auth: true, body: {
+      'drone_id': ?droneId,
+      'target_altitude_m': ?targetAltitudeM,
+    });
+    return DroneFlight.fromJson(json as Map<String, dynamic>);
+  }
+
+  Future<void> deleteFlight(int flightId) async {
+    await _api.delete('/drones/flights/$flightId', auth: true);
+  }
+
+  Future<void> deleteImage(int flightId, int imageId) async {
+    await _api.delete('/drones/flights/$flightId/images/$imageId', auth: true);
+  }
+
   Future<DroneImage> uploadImage(int flightId, Uint8List rgbBytes, String filename, {String? treeId}) async {
     final json = await _api.uploadFile(
       '/drones/flights/$flightId/images',

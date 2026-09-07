@@ -24,7 +24,7 @@ class _ChamaListScreenState extends State<ChamaListScreen> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _future = ChamaRepository.instance.listChamas(mineOnly: _mineOnly));
+    setState(() { _future = ChamaRepository.instance.listChamas(mineOnly: _mineOnly); });
     await _future;
   }
 

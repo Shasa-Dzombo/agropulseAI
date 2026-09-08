@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -6,6 +7,7 @@ import 'drone_analysis_tracker.dart';
 import 'drone_boundary_map_screen.dart';
 import 'drone_image_capture_screen.dart';
 import 'drone_image_detail_screen.dart';
+import 'drone_saved_boundary_picker.dart';
 import 'drone_scan_screen.dart';
 import 'drone_image_view.dart';
 import 'drone_models.dart';
@@ -94,12 +96,59 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
     final result = await Navigator.of(context).push<List<LatLng>>(
       MaterialPageRoute(
         builder: (_) => DroneBoundaryMapScreen(
+          farmId: _flight.farmId,
           initialCenter: LatLng(_flight.homeLatitude, _flight.homeLongitude),
           initialPoints: _flight.boundaryPolygon,
         ),
       ),
     );
     if (result == null) return;
+    await _saveBoundary(result);
+  }
+
+  Future<void> _importKmlBoundary() async {
+    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['kml'], withData: true);
+    final file = picked?.files.single;
+    if (file?.bytes == null) return;
+    try {
+      final parsed = await DroneRepository.instance.parseKmlBoundary(file!.bytes!, file.name);
+      if (!mounted) return;
+      for (final warning in parsed.warnings) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(warning)));
+      }
+      final result = await Navigator.of(context).push<List<LatLng>>(
+        MaterialPageRoute(
+          builder: (_) => DroneBoundaryMapScreen(
+            farmId: _flight.farmId,
+            initialCenter: LatLng(_flight.homeLatitude, _flight.homeLongitude),
+            initialPoints: parsed.points,
+          ),
+        ),
+      );
+      if (result == null) return;
+      await _saveBoundary(result);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _loadSavedBoundary() async {
+    final points = await pickSavedBoundary(context, _flight.farmId);
+    if (points == null || !mounted) return;
+    final result = await Navigator.of(context).push<List<LatLng>>(
+      MaterialPageRoute(
+        builder: (_) => DroneBoundaryMapScreen(
+          farmId: _flight.farmId,
+          initialCenter: LatLng(_flight.homeLatitude, _flight.homeLongitude),
+          initialPoints: points,
+        ),
+      ),
+    );
+    if (result == null) return;
+    await _saveBoundary(result);
+  }
+
+  Future<void> _saveBoundary(List<LatLng> result) async {
     try {
       final updated = await DroneRepository.instance.updateFlight(_flight.id, boundaryPolygon: result);
       if (mounted) setState(() => _flight = updated);
@@ -315,6 +364,16 @@ class _DroneFlightDetailScreenState extends State<DroneFlightDetailScreen> {
                       : 'Boundary: ${_flight.boundaryPolygon!.length} points'),
                 ),
                 TextButton(onPressed: _editBoundary, child: Text(_flight.boundaryPolygon == null ? 'Trace' : 'Edit')),
+                IconButton(
+                  icon: const Icon(Icons.file_upload_outlined, size: 20),
+                  tooltip: 'Import from KML',
+                  onPressed: _importKmlBoundary,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.bookmark_outline, size: 20),
+                  tooltip: 'Load saved template',
+                  onPressed: _loadSavedBoundary,
+                ),
               ],
             ),
             if (_flight.surveyGoals != null && _flight.surveyGoals!.isNotEmpty) ...[

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import FileResponse
 
 from app.db_config import get_production_db_dependency
-from app.models.database import Diagnosis
+from app.models.database import Diagnosis, SavedFlightBoundary
 from app.models.drone import DroneImageAnalysis
 from app.models.database import Farm
 from app.schemas.drone import (
@@ -15,7 +15,7 @@ from app.schemas.drone import (
     FarmWeatherResponse, WeatherSnapshotOut, FlightConditionOut,
     DiseasePressureOut, AgriculturalAlertOut,
     CreateManualFlightRequest, CompleteFlightRequest, KmlWaypointsResponse, UpdateFlightRequest,
-    KmlBoundaryResponse,
+    KmlBoundaryResponse, SavedBoundaryCreateRequest, SavedBoundaryUpdateRequest, SavedBoundaryResponse,
 )
 from app.api.auth import get_current_user
 from app.config import settings
@@ -122,6 +122,93 @@ def parse_kml_boundary_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return KmlBoundaryResponse(points=points, warnings=warnings)
+
+
+def _get_owned_farm_or_raise(db: Session, farm_id: int, user_id: int) -> Farm:
+    farm = db.execute(select(Farm).where(Farm.id == farm_id, Farm.owner_id == user_id)).scalar_one_or_none()
+    if farm is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found or you don't have permission")
+    return farm
+
+
+@router.post("/farms/{farm_id}/boundaries", response_model=SavedBoundaryResponse, status_code=status.HTTP_201_CREATED)
+def create_saved_boundary(
+    farm_id: int,
+    request: SavedBoundaryCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Saves a named, reusable survey-area shape for a farm (see
+    app.models.database.SavedFlightBoundary) - drawn on the map, imported
+    from KML, or copied from an existing flight's boundary_polygon. Doesn't
+    touch any flight; attach it to one by copying `polygon` onto
+    boundary_polygon via POST/PATCH /flights/manual|{flight_id}."""
+    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    saved = SavedFlightBoundary(
+        farm_id=farm_id,
+        created_by_id=current_user["id"],
+        name=request.name,
+        polygon=[p.model_dump() for p in request.polygon],
+    )
+    db.add(saved)
+    db.commit()
+    db.refresh(saved)
+    return saved
+
+
+@router.get("/farms/{farm_id}/boundaries", response_model=List[SavedBoundaryResponse])
+def list_saved_boundaries(
+    farm_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    _get_owned_farm_or_raise(db, farm_id, current_user["id"])
+    return list(db.execute(
+        select(SavedFlightBoundary)
+        .where(SavedFlightBoundary.farm_id == farm_id, SavedFlightBoundary.is_deleted.is_(False))
+        .order_by(SavedFlightBoundary.created_at.desc())
+    ).scalars().all())
+
+
+def _get_owned_boundary_or_raise(db: Session, boundary_id: int, user_id: int) -> SavedFlightBoundary:
+    saved = db.execute(
+        select(SavedFlightBoundary)
+        .join(Farm, Farm.id == SavedFlightBoundary.farm_id)
+        .where(SavedFlightBoundary.id == boundary_id, Farm.owner_id == user_id, SavedFlightBoundary.is_deleted.is_(False))
+    ).scalar_one_or_none()
+    if saved is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved boundary not found or you don't have permission")
+    return saved
+
+
+@router.patch("/boundaries/{boundary_id}", response_model=SavedBoundaryResponse)
+def update_saved_boundary(
+    boundary_id: int,
+    request: SavedBoundaryUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    """Rename, or adjust the shape of, an already-saved boundary - "reused or
+    slightly adjusted" per the model's own docstring."""
+    saved = _get_owned_boundary_or_raise(db, boundary_id, current_user["id"])
+    if request.name is not None:
+        saved.name = request.name
+    if request.polygon is not None:
+        saved.polygon = [p.model_dump() for p in request.polygon]
+    db.commit()
+    db.refresh(saved)
+    return saved
+
+
+@router.delete("/boundaries/{boundary_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_saved_boundary(
+    boundary_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_production_db_dependency),
+):
+    saved = _get_owned_boundary_or_raise(db, boundary_id, current_user["id"])
+    saved.soft_delete()
+    db.commit()
 
 
 @router.post("/flights/manual", response_model=DroneFlightResponse, status_code=status.HTTP_201_CREATED)

@@ -23,6 +23,29 @@ class BoundaryPointIn(BaseModel):
     lng: float
 
 
+class SavedBoundaryCreateRequest(BaseModel):
+    """A named, reusable survey-area shape for a farm - see
+    app.models.database.SavedFlightBoundary."""
+    name: str
+    polygon: List[BoundaryPointIn]
+
+
+class SavedBoundaryUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    polygon: Optional[List[BoundaryPointIn]] = None
+
+
+class SavedBoundaryResponse(BaseModel):
+    id: int
+    farm_id: int
+    name: str
+    polygon: List[Dict[str, float]]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class KmlWaypointsResponse(BaseModel):
     """Result of parsing a .kml file into waypoints
     (app.services.kml_mission_parser). Reviewable, not auto-submitted - the

@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/api_exception.dart';
+import 'drone_repository.dart';
+
 /// Real Earth-radius equirectangular projection, accurate enough for a
 /// single field's footprint (a few hundred metres across) - the shoelace
 /// formula needs flat coordinates, not raw lat/lng degrees.
@@ -34,11 +37,13 @@ double _polygonAreaHectares(List<LatLng> points) {
 /// starting blank (e.g. one parsed from a KML file, or a previously-saved
 /// flight's boundary being edited).
 class DroneBoundaryMapScreen extends StatefulWidget {
+  final int farmId;
   final LatLng initialCenter;
   final List<LatLng>? initialPoints;
 
   const DroneBoundaryMapScreen({
     super.key,
+    required this.farmId,
     required this.initialCenter,
     this.initialPoints,
   });
@@ -49,6 +54,7 @@ class DroneBoundaryMapScreen extends StatefulWidget {
 
 class _DroneBoundaryMapScreenState extends State<DroneBoundaryMapScreen> {
   late List<LatLng> _points;
+  bool _savingTemplate = false;
 
   @override
   void initState() {
@@ -67,6 +73,36 @@ class _DroneBoundaryMapScreenState extends State<DroneBoundaryMapScreen> {
 
   void _save() => Navigator.of(context).pop(_points);
 
+  Future<void> _saveAsTemplate() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save as reusable template'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. North field'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(controller.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+
+    setState(() => _savingTemplate = true);
+    try {
+      await DroneRepository.instance.createSavedBoundary(widget.farmId, name: name, polygon: _points);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved "$name" for reuse on other flights')));
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _savingTemplate = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final areaHa = _polygonAreaHectares(_points);
@@ -74,6 +110,13 @@ class _DroneBoundaryMapScreenState extends State<DroneBoundaryMapScreen> {
       appBar: AppBar(
         title: const Text('Trace flight boundary'),
         actions: [
+          IconButton(
+            icon: _savingTemplate
+                ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.bookmark_add_outlined),
+            onPressed: (_points.length >= 3 && !_savingTemplate) ? _saveAsTemplate : null,
+            tooltip: 'Save as reusable template',
+          ),
           IconButton(icon: const Icon(Icons.undo), onPressed: _points.isEmpty ? null : _undo, tooltip: 'Undo last point'),
           IconButton(icon: const Icon(Icons.delete_sweep_outlined), onPressed: _points.isEmpty ? null : _clear, tooltip: 'Clear all'),
         ],

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/api_exception.dart';
 import 'drone_boundary_map_screen.dart';
 import 'drone_repository.dart';
+import 'drone_saved_boundary_picker.dart';
 
 class DroneFlightCreateScreen extends StatefulWidget {
   final int farmId;
@@ -32,6 +34,7 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
   late final TextEditingController _lngController;
   bool _locating = false;
   bool _saving = false;
+  bool _importingKml = false;
   List<LatLng>? _boundary;
   bool _goalHealth = true;
   bool _goalCount = false;
@@ -93,7 +96,58 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
     );
     final result = await Navigator.of(context).push<List<LatLng>>(
       MaterialPageRoute(
-        builder: (_) => DroneBoundaryMapScreen(initialCenter: center, initialPoints: _boundary),
+        builder: (_) => DroneBoundaryMapScreen(farmId: widget.farmId, initialCenter: center, initialPoints: _boundary),
+      ),
+    );
+    if (result != null) setState(() => _boundary = result);
+  }
+
+  Future<void> _importKml() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['kml'],
+      withData: true,
+    );
+    final file = picked?.files.single;
+    if (file?.bytes == null) return;
+
+    setState(() => _importingKml = true);
+    try {
+      final parsed = await DroneRepository.instance.parseKmlBoundary(file!.bytes!, file.name);
+      if (!mounted) return;
+      for (final warning in parsed.warnings) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(warning)));
+      }
+      // Opens the map with the imported points pre-loaded, same screen as
+      // hand-tracing - review/nudge vertices before they're actually saved,
+      // rather than trusting the KML file blindly.
+      final center = LatLng(
+        double.tryParse(_latController.text) ?? widget.farmLatitude,
+        double.tryParse(_lngController.text) ?? widget.farmLongitude,
+      );
+      final result = await Navigator.of(context).push<List<LatLng>>(
+        MaterialPageRoute(
+          builder: (_) => DroneBoundaryMapScreen(farmId: widget.farmId, initialCenter: center, initialPoints: parsed.points),
+        ),
+      );
+      if (result != null) setState(() => _boundary = result);
+    } on ApiException catch (e) {
+      _showError(e.message);
+    } finally {
+      if (mounted) setState(() => _importingKml = false);
+    }
+  }
+
+  Future<void> _loadSavedBoundary() async {
+    final points = await pickSavedBoundary(context, widget.farmId);
+    if (points == null || !mounted) return;
+    final center = LatLng(
+      double.tryParse(_latController.text) ?? widget.farmLatitude,
+      double.tryParse(_lngController.text) ?? widget.farmLongitude,
+    );
+    final result = await Navigator.of(context).push<List<LatLng>>(
+      MaterialPageRoute(
+        builder: (_) => DroneBoundaryMapScreen(farmId: widget.farmId, initialCenter: center, initialPoints: points),
       ),
     );
     if (result != null) setState(() => _boundary = result);
@@ -219,10 +273,32 @@ class _DroneFlightCreateScreenState extends State<DroneFlightCreateScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _traceBoundary,
+                        icon: const Icon(Icons.crop_free),
+                        label: Text(_boundary == null ? 'Trace boundary' : 'Edit boundary'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _importingKml ? null : _importKml,
+                        icon: _importingKml
+                            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.file_upload_outlined),
+                        label: const Text('Import KML'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 OutlinedButton.icon(
-                  onPressed: _traceBoundary,
-                  icon: const Icon(Icons.crop_free),
-                  label: Text(_boundary == null ? 'Trace flight boundary (optional)' : 'Edit flight boundary'),
+                  onPressed: _loadSavedBoundary,
+                  icon: const Icon(Icons.bookmark_outline),
+                  label: const Text('Load saved template'),
                 ),
                 if (_boundary != null)
                   Padding(

@@ -6,7 +6,10 @@ plugins {
 
 android {
     namespace = "com.agropulse.agropulse_mobile"
-    compileSdk = flutter.compileSdkVersion
+    // flutter.compileSdkVersion (34 on this Flutter version) is behind what
+    // file_picker's flutter_plugin_android_lifecycle dependency requires
+    // (36+) - forced explicitly rather than relying on the Flutter default.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

@@ -104,3 +104,5 @@ docs/
 
 #claude permissions
 .claude/
+# design mockup scratch (large generated HTML canvases, not app code)
+mobile/.design_scratch/
